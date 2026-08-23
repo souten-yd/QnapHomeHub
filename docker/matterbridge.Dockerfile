@@ -10,15 +10,20 @@ RUN npm run typecheck && npm run build
 FROM luligu/matterbridge:3.10.6
 
 USER root
-COPY matterbridge-plugin/package.json matterbridge-plugin/matterbridge-qnaphomehub.config.json /usr/local/lib/node_modules/matterbridge-qnaphomehub/
-COPY --from=plugin-build /app/plugin/dist /usr/local/lib/node_modules/matterbridge-qnaphomehub/dist
-COPY docker/matterbridge-bootstrap.mjs /usr/local/lib/node_modules/matterbridge-qnaphomehub/matterbridge-bootstrap.mjs
+ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub
+COPY matterbridge-plugin/package.json matterbridge-plugin/matterbridge-qnaphomehub.config.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/
+COPY --from=plugin-build /app/plugin/dist ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/dist
+COPY docker/matterbridge-bootstrap.mjs ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/matterbridge-bootstrap.mjs
+# The plugin must use the exact Matterbridge instance that owns the platform.
+# Link to the official global runtime instead of installing a second copy.
+RUN mkdir -p ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/node_modules && \
+    ln -s /usr/local/lib/node_modules/matterbridge ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/node_modules/matterbridge
+
 COPY docker/matterbridge-entrypoint.sh /usr/local/bin/qnaphomehub-matterbridge-entrypoint
 RUN chmod +x /usr/local/bin/qnaphomehub-matterbridge-entrypoint
 
 ENV QNAP_HOME_HUB_URL=http://127.0.0.1:8787 \
-    MATTERBRIDGE_HOMEDIR=/data \
-    QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub
+    MATTERBRIDGE_HOMEDIR=/data
 
 VOLUME ["/data"]
 EXPOSE 8283 5540
