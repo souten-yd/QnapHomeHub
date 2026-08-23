@@ -16,19 +16,23 @@ export class AuthManager {
   private readonly token: string;
   readonly required: boolean;
 
-  constructor(private readonly password: string) {
+  constructor(
+    private readonly username: string,
+    private readonly password: string,
+  ) {
     this.required = password.length > 0;
-    this.token = crypto.createHmac('sha256', password || 'qnaphomehub-no-auth').update('qnaphomehub-session-v1').digest('hex');
+    this.token = crypto.createHmac('sha256', password || 'qnaphomehub-no-auth').update(`qnaphomehub-session-v1:${username}`).digest('hex');
   }
 
   login(req: Request, res: Response): void {
-    const candidate = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!this.required || this.safeEqual(candidate, this.password)) {
+    const candidateUsername = typeof req.body?.username === 'string' ? req.body.username : '';
+    const candidatePassword = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!this.required || (this.safeEqual(candidateUsername, this.username) && this.safeEqual(candidatePassword, this.password))) {
       res.setHeader('Set-Cookie', `${COOKIE}=${this.token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000`);
       res.json({ ok: true });
       return;
     }
-    res.status(401).json({ ok: false, error: 'Invalid password' });
+    res.status(401).json({ ok: false, error: 'Invalid username or password' });
   }
 
   logout(_req: Request, res: Response): void {
