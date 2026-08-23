@@ -9,7 +9,7 @@
 <body>
   <main>
     <header><div><h1>QnapHomeHub</h1><p>SwitchBot BLE → Matter / Alexa</p></div><span id="health" class="pill">確認中</span></header>
-    <section id="login" class="card hidden"><h2>ログイン</h2><form id="loginForm"><input id="password" type="password" placeholder="管理パスワード" required /><button>ログイン</button></form><p id="loginError" class="error"></p></section>
+    <section id="login" class="card hidden"><h2>ログイン</h2><form id="loginForm"><input id="username" type="text" value="admin" placeholder="管理ユーザー名" autocomplete="username" required /><input id="password" type="password" placeholder="管理パスワード" autocomplete="current-password" required /><button>ログイン</button></form><p id="loginError" class="error"></p></section>
     <div id="app" class="hidden">
       <section class="card hero"><div><h2>1. Bluetooth</h2><p>USBドングルからSwitchBotを探します。</p></div><button id="scan">Bluetoothをスキャン</button></section>
       <section class="card"><h2>検出したデバイス</h2><div id="discovered" class="grid empty">まだスキャンしていません。</div></section>
