@@ -6,6 +6,17 @@ on:
 permissions:
   contents: read
 jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --check server/public/app.js
+      - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh
+      - run: docker compose config --quiet
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -27,6 +38,7 @@ jobs:
         working-directory: server
       - run: npm run build
         working-directory: ${{ matrix.package }}
+
   docker:
     runs-on: ubuntu-latest
     steps:
@@ -37,10 +49,35 @@ jobs:
           context: .
           file: docker/server.Dockerfile
           push: false
+          load: true
+          tags: qnaphomehub-server:ci
           platforms: linux/amd64
+      - name: Verify node-switchbot native load
+        run: docker run --rm --entrypoint node qnaphomehub-server:ci -e "import('node-switchbot').then(() => console.log('node-switchbot import ok'))"
+      - name: Smoke test HomeHub HTTP service
+        shell: bash
+        run: |
+          docker run -d --name homehub-ci -p 8787:8787 \
+            -e HOMEHUB_ADMIN_PASSWORD=ci-password \
+            -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
+            qnaphomehub-server:ci
+          for attempt in {1..20}; do
+            if curl -fsS http://127.0.0.1:8787/api/health; then
+              docker rm -f homehub-ci
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs homehub-ci
+          docker rm -f homehub-ci
+          exit 1
       - uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/matterbridge.Dockerfile
           push: false
+          load: true
+          tags: qnaphomehub-matterbridge:ci
           platforms: linux/amd64
+      - name: Smoke test Matterbridge binary
+        run: docker run --rm --entrypoint /app/plugin/node_modules/.bin/matterbridge qnaphomehub-matterbridge:ci --version
