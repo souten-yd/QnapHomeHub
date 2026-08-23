@@ -10,7 +10,11 @@ const api = async (url, options = {}) => {
     throw new Error('Authentication required');
   }
   const text = await response.text();
-  const data = text ? JSON.parse(text) : null;
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); }
+    catch { data = { error: text }; }
+  }
   if (!response.ok) throw new Error(data?.error || response.statusText);
   return data;
 };
@@ -25,16 +29,32 @@ const showApp = () => {
 };
 
 let config;
+let debugBusy = false;
+
+function setTheme(theme) {
+  const selected = theme === 'cyber' ? 'cyber' : 'black';
+  document.documentElement.dataset.theme = selected;
+  localStorage.setItem('qnaphomehub-theme', selected);
+  document.querySelectorAll('[data-theme-choice]').forEach(button => {
+    button.classList.toggle('active', button.dataset.themeChoice === selected);
+  });
+}
+
+for (const button of document.querySelectorAll('[data-theme-choice]')) {
+  button.addEventListener('click', () => setTheme(button.dataset.themeChoice));
+}
+setTheme(localStorage.getItem('qnaphomehub-theme') || 'black');
 
 async function boot() {
   const health = await fetch('/api/health').then(response => response.json());
-  $('#health').textContent = 'オンライン';
+  $('#health').textContent = `オンライン · ${health.version}`;
   $('#matterLink').href = `http://${location.hostname}:8283`;
   try {
     config = await api('/api/config');
     showApp();
     renderConfig();
     await renderRegistered();
+    await refreshDebug(false);
   } catch (error) {
     if (!health.authRequired) console.error(error);
   }
@@ -61,6 +81,7 @@ $('#scan').addEventListener('click', async () => {
   try {
     const data = await api('/api/scan', { method: 'POST' });
     renderDiscovered(data.devices);
+    await refreshDebug(false);
   } catch (error) {
     alert(error.message);
   } finally {
@@ -96,12 +117,19 @@ function renderDiscovered(devices) {
           }),
         });
         await renderRegistered();
+        await refreshDebug(false);
       } catch (error) {
         alert(error.message);
       }
     };
     root.append(node);
   }
+}
+
+function setCommandFeedback(article, state, text) {
+  const feedback = article.querySelector('.commandFeedback');
+  feedback.className = `commandFeedback ${state}`;
+  feedback.textContent = text;
 }
 
 async function renderRegistered() {
@@ -131,13 +159,31 @@ async function renderRegistered() {
     article.querySelectorAll('[data-action]').forEach(button => {
       button.onclick = async () => {
         const result = article.querySelector('.result');
+        const action = button.dataset.action;
+        const oldText = button.textContent;
+        button.disabled = true;
+        button.textContent = '送信中…';
+        setCommandFeedback(article, 'pending', `${oldText} をHomeHubへ送信中…`);
+        result.classList.add('hidden');
         try {
-          const data = await api(`/api/devices/${encodeURIComponent(device.id)}/${button.dataset.action}`, { method: 'POST' });
+          const data = await api(`/api/devices/${encodeURIComponent(device.id)}/${action}`, { method: 'POST' });
+          const failed = data?.success === false;
+          if (failed) {
+            setCommandFeedback(article, 'failure', `失敗: ${data.error || 'SwitchBotがsuccess=falseを返しました'}`);
+          } else {
+            const connection = data?.connectionType ? ` · ${data.connectionType.toUpperCase()}` : '';
+            setCommandFeedback(article, 'success', `${oldText} 完了${connection}`);
+          }
           result.textContent = JSON.stringify(data, null, 2);
           result.classList.remove('hidden');
         } catch (error) {
+          setCommandFeedback(article, 'failure', `APIエラー: ${error.message}`);
           result.textContent = error.message;
           result.classList.remove('hidden');
+        } finally {
+          button.disabled = false;
+          button.textContent = oldText;
+          await refreshDebug(false).catch(() => undefined);
         }
       };
     });
@@ -148,6 +194,7 @@ async function renderRegistered() {
         body: JSON.stringify({ exposeMatter: !device.exposeMatter }),
       });
       await renderRegistered();
+      await refreshDebug(false);
     };
 
     article.querySelector('.saveDevice').onclick = async () => {
@@ -170,6 +217,7 @@ async function renderRegistered() {
       if (!confirm(`${device.name} を削除しますか？`)) return;
       await api(`/api/devices/${encodeURIComponent(device.id)}`, { method: 'DELETE' });
       await renderRegistered();
+      await refreshDebug(false);
     };
     root.append(node);
   }
@@ -193,6 +241,7 @@ $('#saveConfig').onclick = async () => {
     }),
   });
   renderConfig();
+  await refreshDebug(false);
   if (config.restartRequired) alert('HCI/API経路の変更は再起動後に反映されます。');
 };
 
@@ -207,5 +256,87 @@ $('#restart').onclick = async () => {
   await api('/api/system/restart', { method: 'POST' });
   location.reload();
 };
+
+function formatTime(iso) {
+  try { return new Date(iso).toLocaleTimeString('ja-JP', { hour12: false }); }
+  catch { return iso; }
+}
+
+function renderDebugEvents(events) {
+  const root = $('#debugEvents');
+  root.replaceChildren();
+  const list = [...(events || [])].reverse();
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'commandFeedback idle';
+    empty.textContent = 'デバッグイベントなし';
+    root.append(empty);
+    return;
+  }
+  for (const event of list) {
+    const row = document.createElement('div');
+    row.className = `debugEvent ${event.level || 'info'}`;
+    for (const [className, text] of [
+      ['time', formatTime(event.at)],
+      ['level', event.level || 'info'],
+      ['source', event.source || '-'],
+      ['message', event.message || ''],
+    ]) {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = text;
+      row.append(span);
+    }
+    if (event.details && Object.keys(event.details).length) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = 'details';
+      const pre = document.createElement('pre');
+      pre.textContent = JSON.stringify(event.details, null, 2);
+      details.append(summary, pre);
+      row.append(details);
+    }
+    root.append(row);
+  }
+}
+
+async function refreshDebug(showError = true) {
+  if (debugBusy || $('#app').classList.contains('hidden')) return;
+  debugBusy = true;
+  try {
+    const data = await api('/api/debug/status?limit=160');
+    const matter = data.matterbridge || {};
+    const http = matter.http || {};
+    $('#debugHomehub').textContent = `ONLINE · ${data.homehub.registeredCount} registered`;
+    $('#debugBle').textContent = `hci${data.homehub.hciDeviceId} · ${data.homehub.discoveredCount} discovered`;
+    $('#debugMatter').textContent = `${http.reachable ? 'HTTP OK' : 'HTTP NG'} · ${matter.state || 'not-seen'} · ${matter.deviceCount ?? 0} devices`;
+    const matterOk = http.reachable && matter.state === 'ready';
+    $('#debugBadge').textContent = matterOk ? 'ALL GREEN' : (http.reachable ? 'CHECK PLUGIN' : 'MATTER OFFLINE');
+    $('#debugBadge').className = `pill ${matterOk ? 'debugGood' : 'debugWarn'}`;
+    $('#debugSummary').textContent = JSON.stringify({
+      homehub: data.homehub,
+      matterbridge: data.matterbridge,
+      system: data.system,
+    }, null, 2);
+    renderDebugEvents(data.events);
+  } catch (error) {
+    $('#debugBadge').textContent = 'DEBUG ERROR';
+    if (showError) $('#debugSummary').textContent = `デバッグ取得失敗: ${error.message}`;
+  } finally {
+    debugBusy = false;
+  }
+}
+
+$('#refreshDebug').onclick = () => refreshDebug(true);
+$('#clearDebug').onclick = async () => {
+  await api('/api/debug/clear', { method: 'POST' });
+  await refreshDebug(true);
+};
+$('#debugPanel').addEventListener('toggle', () => {
+  if ($('#debugPanel').open) void refreshDebug(false);
+});
+setInterval(() => {
+  if ($('#autoDebug')?.checked) void refreshDebug(false);
+}, 2000);
 
 boot().catch(error => console.error(error));
