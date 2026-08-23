@@ -5,6 +5,16 @@ PLUGIN="${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN:-/usr/local/lib/node_modules/matterbri
 HOME_DIR="${MATTERBRIDGE_HOMEDIR:-/data}"
 
 node "$PLUGIN/matterbridge-bootstrap.mjs"
-"$MB" --homedir "$HOME_DIR" --add "$PLUGIN" >/dev/null 2>&1 || true
-"$MB" --homedir "$HOME_DIR" --enable "$PLUGIN" >/dev/null 2>&1 || true
+
+echo "QnapHomeHub: registering Matterbridge plugin from $PLUGIN"
+if ! "$MB" --homedir "$HOME_DIR" --add "$PLUGIN"; then
+  echo "QnapHomeHub: WARNING: Matterbridge --add failed; continuing so the frontend and logs remain available" >&2
+fi
+
+echo "QnapHomeHub: enabling Matterbridge plugin from $PLUGIN"
+if ! "$MB" --homedir "$HOME_DIR" --enable "$PLUGIN"; then
+  echo "QnapHomeHub: WARNING: Matterbridge --enable failed; continuing so the frontend and logs remain available" >&2
+fi
+
+echo "QnapHomeHub: starting Matterbridge frontend on :8283"
 exec "$MB" --homedir "$HOME_DIR" --bridge --frontend 8283 --docker --no-ansi
