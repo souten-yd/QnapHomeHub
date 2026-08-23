@@ -31,6 +31,11 @@ if (botPasswordsRaw) {
 const auth = new AuthManager(adminPassword);
 const switchbot = new SwitchBotManager(() => store.get(), switchbotToken, switchbotSecret);
 const app = express();
+
+function routeParam(value: string | string[] | undefined): string {
+  return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
 app.disable('x-powered-by');
 app.use(express.json({ limit: '128kb' }));
 
@@ -51,11 +56,12 @@ app.get('/api/internal/matter/devices', internalAuth, (_req, res) => {
 });
 app.post('/api/internal/devices/:id/:action', internalAuth, async (req, res) => {
   try {
-    const action = req.params.action as 'press' | 'on' | 'off' | 'status';
+    const id = routeParam(req.params.id);
+    const action = routeParam(req.params.action) as 'press' | 'on' | 'off' | 'status';
     if (!['press', 'on', 'off', 'status'].includes(action)) return void res.status(400).json({ error: 'Unknown action' });
-    const registered = store.get().devices.find(d => d.id === req.params.id);
-    const password = botPasswords[req.params.id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
-    res.json(await switchbot.command(req.params.id, action, password));
+    const registered = store.get().devices.find(device => device.id === id);
+    const password = botPasswords[id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
+    res.json(await switchbot.command(id, action, password));
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 
@@ -100,7 +106,8 @@ app.post('/api/devices', async (req, res) => {
 });
 app.patch('/api/devices/:id', async (req, res) => {
   const config = store.get();
-  const index = config.devices.findIndex(device => device.id === req.params.id);
+  const id = routeParam(req.params.id);
+  const index = config.devices.findIndex(device => device.id === id);
   if (index < 0) return void res.status(404).json({ error: 'Device not found' });
   const old = config.devices[index]!;
   const next: RegisteredDevice = {
@@ -116,16 +123,18 @@ app.patch('/api/devices/:id', async (req, res) => {
 });
 app.delete('/api/devices/:id', async (req, res) => {
   const config = store.get();
-  await store.update({ devices: config.devices.filter(device => device.id !== req.params.id) });
+  const id = routeParam(req.params.id);
+  await store.update({ devices: config.devices.filter(device => device.id !== id) });
   res.status(204).end();
 });
 app.post('/api/devices/:id/:action', async (req, res) => {
   try {
-    const action = req.params.action as 'press' | 'on' | 'off' | 'status';
+    const id = routeParam(req.params.id);
+    const action = routeParam(req.params.action) as 'press' | 'on' | 'off' | 'status';
     if (!['press', 'on', 'off', 'status'].includes(action)) return void res.status(400).json({ error: 'Unknown action' });
-    const registered = store.get().devices.find(device => device.id === req.params.id);
-    const password = botPasswords[req.params.id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
-    res.json(await switchbot.command(req.params.id, action, password));
+    const registered = store.get().devices.find(device => device.id === id);
+    const password = botPasswords[id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
+    res.json(await switchbot.command(id, action, password));
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 app.get('/api/diagnostics', async (_req, res) => res.json(await diagnostics()));
