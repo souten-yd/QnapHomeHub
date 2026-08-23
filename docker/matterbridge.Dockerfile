@@ -3,7 +3,8 @@ WORKDIR /app/plugin
 COPY matterbridge-plugin/package.json matterbridge-plugin/tsconfig.json ./
 RUN npm install --no-audit --no-fund
 COPY matterbridge-plugin/src ./src
-RUN npm run typecheck && npm run build
+RUN npm run typecheck && npm run build && \
+    npm pkg delete devDependencies scripts
 
 # Reuse Matterbridge's official, version-pinned Docker runtime. This preserves
 # the upstream frontend, Matter runtime dependency layout and Docker healthcheck.
@@ -11,7 +12,10 @@ FROM luligu/matterbridge:3.10.6
 
 USER root
 ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub
-COPY matterbridge-plugin/package.json matterbridge-plugin/matterbridge-qnaphomehub.config.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/
+# Matterbridge rejects plugins whose runtime package.json lists matterbridge in
+# dependencies/devDependencies. Copy the pruned package.json from the build stage.
+COPY --from=plugin-build /app/plugin/package.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/package.json
+COPY matterbridge-plugin/matterbridge-qnaphomehub.config.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/
 COPY --from=plugin-build /app/plugin/dist ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/dist
 COPY docker/matterbridge-bootstrap.mjs ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/matterbridge-bootstrap.mjs
 # The plugin must use the exact Matterbridge instance that owns the platform.

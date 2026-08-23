@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { AuthManager } from './auth.js';
 import { ConfigStore, readSecret } from './config.js';
+import { DebugEventStore } from './debug-events.js';
 import { uniqueDeviceName } from './device-names.js';
 import { diagnostics } from './diagnostics.js';
 import { SwitchBotManager } from './switchbot-manager.js';
@@ -13,6 +14,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR ?? '/data';
 const port = Number(process.env.PORT ?? '8787');
 const store = new ConfigStore(dataDir);
+const debug = new DebugEventStore();
 await store.load();
 
 const [adminUsernameRaw, adminPassword, switchbotToken, switchbotSecret, internalToken, botPasswordsRaw] = await Promise.all([
@@ -28,15 +30,67 @@ const adminUsername = adminUsernameRaw || 'admin';
 let botPasswords: Record<string, string> = {};
 if (botPasswordsRaw) {
   try { botPasswords = JSON.parse(botPasswordsRaw) as Record<string, string>; }
-  catch { console.warn('SWITCHBOT_BOT_PASSWORDS is not valid JSON; ignoring it'); }
+  catch {
+    console.warn('SWITCHBOT_BOT_PASSWORDS is not valid JSON; ignoring it');
+    debug.add('warn', 'config', 'SWITCHBOT_BOT_PASSWORDS is not valid JSON; ignoring it');
+  }
 }
 
 const auth = new AuthManager(adminUsername, adminPassword);
-const switchbot = new SwitchBotManager(() => store.get(), switchbotToken, switchbotSecret);
+const switchbot = new SwitchBotManager(
+  () => store.get(),
+  switchbotToken,
+  switchbotSecret,
+  (level, source, message, details) => debug.add(level, source, message, details),
+);
 const app = express();
+
+let matterStatus: {
+  state: string;
+  lastSeenAt?: string;
+  deviceCount?: number;
+  error?: string;
+} = { state: 'not-seen' };
+let matterStatusSignature = '';
 
 function routeParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? (value[0] ?? '') : (value ?? '');
+}
+
+function botPasswordFor(id: string): string | undefined {
+  const registered = store.get().devices.find(device => device.id === id);
+  return botPasswords[id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
+}
+
+async function matterbridgeHealth(): Promise<Record<string, unknown>> {
+  try {
+    const response = await fetch('http://127.0.0.1:8283/health', { signal: AbortSignal.timeout(1500) });
+    const text = await response.text();
+    return { reachable: true, status: response.status, body: text.slice(0, 500) };
+  } catch (error) {
+    return { reachable: false, error: (error as Error).message };
+  }
+}
+
+async function runDeviceCommand(
+  id: string,
+  action: 'press' | 'on' | 'off' | 'status',
+  source: 'web' | 'matterbridge',
+): Promise<unknown> {
+  debug.add('info', `api.${source}`, 'Command HTTP request received', { id, action });
+  try {
+    const result = await switchbot.command(id, action, botPasswordFor(id));
+    const failed = Boolean(result && typeof result === 'object' && 'success' in result && (result as { success?: unknown }).success === false);
+    debug.add(failed ? 'error' : 'info', `api.${source}`, failed ? 'Command HTTP request completed with failure' : 'Command HTTP request completed', {
+      id,
+      action,
+      result: result as Record<string, unknown>,
+    });
+    return result;
+  } catch (error) {
+    debug.add('error', `api.${source}`, 'Command HTTP request failed', { id, action, error: (error as Error).message });
+    throw error;
+  }
 }
 
 app.disable('x-powered-by');
@@ -57,14 +111,27 @@ const internalAuth: express.RequestHandler = (req, res, next) => {
 app.get('/api/internal/matter/devices', internalAuth, (_req, res) => {
   res.json(store.get().devices.filter(device => device.exposeMatter));
 });
+app.post('/api/internal/matter/status', internalAuth, (req, res) => {
+  const next = {
+    state: String(req.body?.state || 'unknown').slice(0, 40),
+    lastSeenAt: new Date().toISOString(),
+    deviceCount: Number.isFinite(Number(req.body?.deviceCount)) ? Number(req.body.deviceCount) : undefined,
+    error: req.body?.error ? String(req.body.error).slice(0, 1000) : undefined,
+  };
+  const signature = JSON.stringify([next.state, next.deviceCount, next.error]);
+  matterStatus = next;
+  if (signature !== matterStatusSignature) {
+    matterStatusSignature = signature;
+    debug.add(next.error ? 'error' : 'info', 'matterbridge', 'Matterbridge plugin status changed', next);
+  }
+  res.json({ ok: true });
+});
 app.post('/api/internal/devices/:id/:action', internalAuth, async (req, res) => {
   try {
     const id = routeParam(req.params.id);
     const action = routeParam(req.params.action) as 'press' | 'on' | 'off' | 'status';
     if (!['press', 'on', 'off', 'status'].includes(action)) return void res.status(400).json({ error: 'Unknown action' });
-    const registered = store.get().devices.find(device => device.id === id);
-    const password = botPasswords[id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
-    res.json(await switchbot.command(id, action, password));
+    res.json(await runDeviceCommand(id, action, 'matterbridge'));
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 
@@ -81,6 +148,12 @@ app.patch('/api/config', async (req, res) => {
   if (req.body.scanOnStartup !== undefined) patch.scanOnStartup = Boolean(req.body.scanOnStartup);
   const previous = store.get();
   const next = await store.update(patch);
+  debug.add('info', 'config', 'Configuration updated', {
+    hciDeviceId: next.hciDeviceId,
+    scanTimeoutMs: next.scanTimeoutMs,
+    apiFallback: next.apiFallback,
+    scanOnStartup: next.scanOnStartup,
+  });
   res.json({ ...next, restartRequired: previous.hciDeviceId !== next.hciDeviceId || previous.apiFallback !== next.apiFallback });
 });
 app.post('/api/scan', async (_req, res) => {
@@ -106,6 +179,7 @@ app.post('/api/devices', async (req, res) => {
     createdAt: new Date().toISOString(),
   };
   await store.update({ devices: [...config.devices, device] });
+  debug.add('info', 'device', 'Device registered', { id: device.id, name: device.name, mac: device.mac, mode: device.mode, exposeMatter: device.exposeMatter });
   res.status(201).json(device);
 });
 app.patch('/api/devices/:id', async (req, res) => {
@@ -123,12 +197,14 @@ app.patch('/api/devices/:id', async (req, res) => {
   };
   const devices = [...config.devices]; devices[index] = next;
   await store.update({ devices });
+  debug.add('info', 'device', 'Device configuration updated', { id: next.id, name: next.name, mode: next.mode, exposeMatter: next.exposeMatter, matterType: next.matterType });
   res.json(next);
 });
 app.delete('/api/devices/:id', async (req, res) => {
   const config = store.get();
   const id = routeParam(req.params.id);
   await store.update({ devices: config.devices.filter(device => device.id !== id) });
+  debug.add('info', 'device', 'Device removed', { id });
   res.status(204).end();
 });
 app.post('/api/devices/:id/:action', async (req, res) => {
@@ -136,13 +212,35 @@ app.post('/api/devices/:id/:action', async (req, res) => {
     const id = routeParam(req.params.id);
     const action = routeParam(req.params.action) as 'press' | 'on' | 'off' | 'status';
     if (!['press', 'on', 'off', 'status'].includes(action)) return void res.status(400).json({ error: 'Unknown action' });
-    const registered = store.get().devices.find(device => device.id === id);
-    const password = botPasswords[id] ?? botPasswords[(registered?.mac ?? '').replaceAll(':', '').toUpperCase()];
-    res.json(await switchbot.command(id, action, password));
+    res.json(await runDeviceCommand(id, action, 'web'));
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 app.get('/api/diagnostics', async (_req, res) => res.json(await diagnostics()));
+app.get('/api/debug/status', async (req, res) => {
+  const limit = Number(req.query.limit ?? 120);
+  res.json({
+    now: new Date().toISOString(),
+    homehub: {
+      hciDeviceId: store.get().hciDeviceId,
+      discoveredCount: switchbot.listDiscovered().length,
+      registeredCount: store.get().devices.length,
+      discovered: switchbot.listDiscovered(),
+    },
+    matterbridge: {
+      ...matterStatus,
+      http: await matterbridgeHealth(),
+    },
+    system: await diagnostics(),
+    events: debug.list(limit),
+  });
+});
+app.post('/api/debug/clear', (_req, res) => {
+  debug.clear();
+  debug.add('info', 'debug', 'Web debug event history cleared');
+  res.json({ ok: true });
+});
 app.post('/api/system/restart', (_req, res) => {
+  debug.add('warn', 'system', 'HomeHub restart requested from Web UI');
   res.json({ ok: true });
   setTimeout(() => process.exit(0), 250).unref();
 });
@@ -151,10 +249,14 @@ const publicDir = path.resolve(here, '../public');
 app.use(express.static(publicDir));
 app.use((_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
-const server = app.listen(port, '0.0.0.0', () => console.log(`QnapHomeHub listening on http://0.0.0.0:${port}`));
-if (store.get().scanOnStartup) switchbot.scan().catch(error => console.warn('Startup scan failed:', error));
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`QnapHomeHub listening on http://0.0.0.0:${port}`);
+  debug.add('info', 'system', 'QnapHomeHub HTTP server is ready', { port, hciDeviceId: store.get().hciDeviceId });
+});
+if (store.get().scanOnStartup) switchbot.scan().catch(error => debug.add('error', 'ble.scan', 'Startup scan failed', { error: (error as Error).message }));
 
 const shutdown = async () => {
+  debug.add('info', 'system', 'QnapHomeHub shutting down');
   server.close();
   await switchbot.cleanup().catch(() => undefined);
   process.exit(0);

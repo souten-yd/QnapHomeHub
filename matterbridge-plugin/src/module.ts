@@ -13,6 +13,8 @@ import { OnOff } from 'matterbridge/matter/clusters';
 type Device = { id:string; name:string; deviceType:string; mac?:string; mode:'press'|'switch'; exposeMatter:boolean; matterType:'outlet'|'light' };
 type Config = BasePlatformConfig;
 
+type HomeHubCommandResult = { success?: boolean; error?: string } & Record<string, unknown>;
+
 async function readToken(): Promise<string> {
   const file = process.env.HOMEHUB_INTERNAL_TOKEN_FILE;
   if (file) return (await fs.readFile(file, 'utf8')).trim();
@@ -44,14 +46,27 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
   override async onStart(): Promise<void> {
     await this.ready;
     this.token = await readToken();
-    if (!this.token) this.log.error('HOMEHUB_INTERNAL_TOKEN is not configured');
-    await this.reconcile();
-    this.timer = setInterval(() => void this.reconcile().catch(error => this.log.error(`Reconcile failed: ${String(error)}`)), 15_000);
+    if (!this.token) {
+      this.log.error('HOMEHUB_INTERNAL_TOKEN is not configured');
+      return;
+    }
+    await this.reportStatus('starting');
+    try {
+      await this.reconcile();
+    } catch (error) {
+      this.log.error(`Initial reconcile failed: ${String(error)}`);
+      await this.reportStatus('error', 0, String(error));
+    }
+    this.timer = setInterval(() => void this.reconcile().catch(async error => {
+      this.log.error(`Reconcile failed: ${String(error)}`);
+      await this.reportStatus('error', this.registered.size, String(error));
+    }), 15_000);
     this.timer.unref();
   }
 
   override async onShutdown(reason?: string): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    await this.reportStatus('stopping', this.registered.size).catch(() => undefined);
     await super.onShutdown(reason);
   }
 
@@ -75,6 +90,7 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
         if (current !== undefined) await this.unregisterHomeHubDevice(device.id);
         await this.registerHomeHubDevice(device, signature);
       }
+      await this.reportStatus('ready', this.registered.size);
     } finally {
       this.reconciling = false;
     }
@@ -123,14 +139,35 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
         method: 'POST',
         headers: { 'x-homehub-internal-token': this.token, 'content-type': 'application/json' },
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      const text = await response.text();
+      let payload: HomeHubCommandResult = {};
+      if (text) {
+        try { payload = JSON.parse(text) as HomeHubCommandResult; }
+        catch { payload = { error: text }; }
+      }
+      if (!response.ok) throw new Error(`HTTP ${response.status}: ${payload.error ?? text}`);
+      if (payload.success === false) throw new Error(payload.error || 'HomeHub returned success=false');
       if (device.mode === 'press') {
         await new Promise(resolve => setTimeout(resolve, 250));
         await endpoint.setAttribute(OnOff, 'onOff', false, this.log);
       }
     } catch (error) {
       this.log.error(`Command ${action} failed for ${device.name}: ${String(error)}`);
+      await this.reportStatus('command-error', this.registered.size, `${device.name}: ${String(error)}`).catch(() => undefined);
       if (device.mode === 'press') await endpoint.setAttribute(OnOff, 'onOff', false, this.log);
+    }
+  }
+
+  private async reportStatus(state: string, deviceCount = this.registered.size, error?: string): Promise<void> {
+    if (!this.token) return;
+    try {
+      await fetch(`${this.baseUrl}/api/internal/matter/status`, {
+        method: 'POST',
+        headers: { 'x-homehub-internal-token': this.token, 'content-type': 'application/json' },
+        body: JSON.stringify({ state, deviceCount, error }),
+      });
+    } catch (reportError) {
+      this.log.warn(`Unable to report status to HomeHub: ${String(reportError)}`);
     }
   }
 }
