@@ -2,9 +2,22 @@
 set -eu
 mkdir -p secrets data/homehub data/matterbridge
 chmod 700 secrets data 2>/dev/null || true
+if [ ! -f secrets/homehub_admin_username.txt ]; then
+  printf 'HomeHub admin username [admin]: '
+  IFS= read -r USERNAME || USERNAME=''
+  [ -n "$USERNAME" ] || USERNAME='admin'
+  printf '%s\n' "$USERNAME" > secrets/homehub_admin_username.txt
+fi
 if [ ! -f secrets/homehub_admin_password.txt ]; then
-  printf 'HomeHub admin password: '
-  stty -echo; IFS= read -r PASS; stty echo; printf '\n'
+  PASS=''
+  while [ -z "$PASS" ]; do
+    printf 'HomeHub admin password: '
+    stty -echo 2>/dev/null || true
+    IFS= read -r PASS || PASS=''
+    stty echo 2>/dev/null || true
+    printf '\n'
+    [ -n "$PASS" ] || echo 'Password must not be empty.'
+  done
   printf '%s\n' "$PASS" > secrets/homehub_admin_password.txt
 fi
 if [ ! -f secrets/homehub_internal_token.txt ]; then
