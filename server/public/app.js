@@ -45,7 +45,7 @@ $('#loginForm').addEventListener('submit', async event => {
   try {
     await api('/api/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ password: $('#password').value }),
+      body: JSON.stringify({ username: $('#username').value, password: $('#password').value }),
     });
     $('#loginError').textContent = '';
     await boot();
