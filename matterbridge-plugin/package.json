@@ -9,11 +9,10 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {
-    "matterbridge": "3.10.6"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "24.3.0",
+    "matterbridge": "3.10.6",
     "typescript": "5.9.2"
   }
 }
