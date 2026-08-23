@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "express": "5.1.0",
-    "node-switchbot": "4.0.1"
+    "node-switchbot": "4.0.3"
   },
   "devDependencies": {
     "@types/express": "5.0.3",
