@@ -1,0 +1,9 @@
+{
+  "name": "matterbridge-qnaphomehub",
+  "type": "DynamicPlatform",
+  "version": "0.1.0",
+  "debug": false,
+  "unregisterOnShutdown": false,
+  "whiteList": [],
+  "blackList": []
+}

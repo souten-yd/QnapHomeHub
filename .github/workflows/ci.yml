@@ -1,0 +1,108 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node --check server/public/app.js
+      - run: node --check docker/matterbridge-bootstrap.mjs
+      - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh
+      - run: docker compose config --quiet
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package: [server, matterbridge-plugin]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ${{ matrix.package }}/package.json
+      - run: npm install --no-audit --no-fund
+        working-directory: ${{ matrix.package }}
+      - run: npm run typecheck
+        working-directory: ${{ matrix.package }}
+      - if: matrix.package == 'server'
+        run: npm test
+        working-directory: server
+      - run: npm run build
+        working-directory: ${{ matrix.package }}
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          push: false
+          load: true
+          tags: qnaphomehub-server:ci
+          platforms: linux/amd64
+      - name: Verify node-switchbot native load
+        run: docker run --rm --entrypoint node qnaphomehub-server:ci -e "import('node-switchbot').then(() => console.log('node-switchbot import ok'))"
+      - name: Start HomeHub for integration smoke
+        shell: bash
+        run: |
+          docker network create qnaphomehub-ci
+          docker run -d --name homehub-ci --network qnaphomehub-ci -p 8787:8787 \
+            -e HOMEHUB_ADMIN_USERNAME=admin \
+            -e HOMEHUB_ADMIN_PASSWORD=ci-password \
+            -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
+            qnaphomehub-server:ci
+          for attempt in {1..20}; do
+            if curl -fsS http://127.0.0.1:8787/api/health; then exit 0; fi
+            sleep 1
+          done
+          docker logs homehub-ci
+          exit 1
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/matterbridge.Dockerfile
+          push: false
+          load: true
+          tags: qnaphomehub-matterbridge:ci
+          platforms: linux/amd64
+      - name: Smoke test Matterbridge secret login and HomeHub integration
+        shell: bash
+        run: |
+          docker run -d --name matterbridge-ci --network qnaphomehub-ci -p 8283:8283 \
+            -e QNAP_HOME_HUB_URL=http://homehub-ci:8787 \
+            -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
+            -e MATTERBRIDGE_PASSWORD=ci-matterbridge-password \
+            qnaphomehub-matterbridge:ci
+          for attempt in {1..40}; do
+            if curl -fsS http://127.0.0.1:8283/health; then
+              LOGIN="$(curl -fsS -X POST http://127.0.0.1:8283/api/login -H 'content-type: application/json' -d '{"password":"ci-matterbridge-password"}')"
+              echo "$LOGIN" | grep -q '"valid":true'
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs matterbridge-ci
+          exit 1
+      - name: Integration logs on failure
+        if: failure()
+        run: |
+          docker logs homehub-ci 2>/dev/null || true
+          docker logs matterbridge-ci 2>/dev/null || true
+      - name: Cleanup integration containers
+        if: always()
+        run: |
+          docker rm -f matterbridge-ci homehub-ci 2>/dev/null || true
+          docker network rm qnaphomehub-ci 2>/dev/null || true
