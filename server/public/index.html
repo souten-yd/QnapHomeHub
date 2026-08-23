@@ -14,7 +14,7 @@
       <section class="card hero"><div><h2>1. Bluetooth</h2><p>USBドングルからSwitchBotを探します。</p></div><button id="scan">Bluetoothをスキャン</button></section>
       <section class="card"><h2>検出したデバイス</h2><div id="discovered" class="grid empty">まだスキャンしていません。</div></section>
       <section class="card"><h2>登録済み</h2><div id="registered" class="grid empty">登録デバイスなし</div></section>
-      <section class="card hero"><div><h2>2. Alexa / Matter</h2><p>登録後、MatterbridgeのWeb画面からAlexaペアリングQRを表示します。</p></div><a id="matterLink" class="button" target="_blank" rel="noreferrer">Matter設定を開く</a></section>
+      <section class="card hero"><div><h2>2. Alexa / Matter</h2><p>登録後、MatterbridgeのWeb画面からAlexaペアリングQR、Fabric、Matter設定を管理します。</p></div><a id="matterLink" class="button" target="_blank" rel="noreferrer">Matter設定を開く</a></section>
       <details class="card"><summary>詳細設定</summary><div class="detailsBody">
         <label>HCIアダプター番号 <input id="hciDeviceId" type="number" min="0" /></label>
         <label>BLEスキャン時間(ms) <input id="scanTimeoutMs" type="number" min="3000" max="60000" /></label>
@@ -26,7 +26,7 @@
     </div>
   </main>
   <template id="discoveredTpl"><article><h3></h3><p class="meta"></p><input class="name" placeholder="表示名"/><select class="mode"><option value="press">Press</option><option value="switch">Switch</option></select><button class="add">登録</button></article></template>
-  <template id="registeredTpl"><article><div class="row"><h3></h3><span class="pill matter"></span></div><p class="meta"></p><div class="actions"><button data-action="press">押す</button><button data-action="on">ON</button><button data-action="off">OFF</button><button data-action="status" class="secondary">状態</button></div><div class="actions"><button class="toggleMatter secondary">Matter切替</button><button class="remove danger">削除</button></div><pre class="result hidden"></pre></article></template>
+  <template id="registeredTpl"><article><div class="row"><h3></h3><span class="pill matter"></span></div><p class="meta"></p><div class="actions"><button data-action="press">押す</button><button data-action="on">ON</button><button data-action="off">OFF</button><button data-action="status" class="secondary">状態</button></div><div class="actions"><button class="toggleMatter secondary">Matter切替</button><button class="remove danger">削除</button></div><details class="deviceSettings"><summary>デバイス設定</summary><label>表示名<input class="editName" /></label><label>Botモード<select class="editMode"><option value="press">Press</option><option value="switch">Switch</option></select></label><label>Matter公開形式<select class="editMatterType"><option value="outlet">Outlet（Alexa推奨）</option><option value="light">Light</option></select></label><button class="saveDevice">設定を保存</button></details><pre class="result hidden"></pre></article></template>
   <script type="module" src="/app.js"></script>
 </body>
 </html>
