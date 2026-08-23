@@ -40,10 +40,12 @@ services:
     environment:
       QNAP_HOME_HUB_URL: http://127.0.0.1:8787
       HOMEHUB_INTERNAL_TOKEN_FILE: /run/secrets/homehub_internal_token
+      MATTERBRIDGE_PASSWORD_FILE: /run/secrets/homehub_admin_password
     volumes:
       - ./data/matterbridge:/data
     secrets:
       - homehub_internal_token
+      - homehub_admin_password
 
 secrets:
   homehub_admin_username:
