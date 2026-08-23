@@ -18,5 +18,12 @@
     "@types/node": "24.3.0",
     "typescript": "5.9.2",
     "vitest": "3.2.4"
+  },
+  "allowScripts": {
+    "@stoprocent/bluetooth-hci-socket": true,
+    "@stoprocent/noble": true,
+    "@serialport/bindings-cpp": true,
+    "usb": true,
+    "esbuild": true
   }
 }
