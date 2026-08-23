@@ -1,14 +1,17 @@
 FROM node:24-bookworm AS build
 WORKDIR /app/plugin
 COPY matterbridge-plugin/package.json matterbridge-plugin/tsconfig.json ./
-RUN npm install --no-audit --no-fund
+RUN npm install --install-strategy=nested --no-audit --no-fund
 COPY matterbridge-plugin/src ./src
 RUN npm run typecheck && npm run build
 
 FROM node:24-bookworm-slim
 WORKDIR /app/plugin
 COPY matterbridge-plugin/package.json matterbridge-plugin/matterbridge-qnaphomehub.config.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+# Matterbridge derives its application root from the location of @matterbridge/core.
+# Keep dependencies nested so npm hoisting does not make Matterbridge look for
+# apps/frontend under /app/plugin instead of node_modules/matterbridge.
+RUN npm install --omit=dev --install-strategy=nested --no-audit --no-fund
 COPY --from=build /app/plugin/dist ./dist
 COPY docker/matterbridge-bootstrap.mjs /app/plugin/matterbridge-bootstrap.mjs
 COPY docker/matterbridge-entrypoint.sh /usr/local/bin/matterbridge-entrypoint
