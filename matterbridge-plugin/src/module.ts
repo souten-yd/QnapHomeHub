@@ -19,6 +19,10 @@ async function readToken(): Promise<string> {
   return (process.env.HOMEHUB_INTERNAL_TOKEN ?? '').trim();
 }
 
+function deviceSignature(device: Device): string {
+  return JSON.stringify([device.name, device.deviceType, device.mode, device.matterType]);
+}
+
 export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: Config): QnapHomeHubPlatform {
   return new QnapHomeHubPlatform(matterbridge, log, config);
 }
@@ -27,7 +31,8 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
   private readonly baseUrl = process.env.QNAP_HOME_HUB_URL ?? 'http://127.0.0.1:8787';
   private token = '';
   private timer?: NodeJS.Timeout;
-  private registered = new Set<string>();
+  private registered = new Map<string, string>();
+  private reconciling = false;
 
   constructor(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: Config) {
     super(matterbridge, log, config);
@@ -51,17 +56,40 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
   }
 
   private async reconcile(): Promise<void> {
-    if (!this.token) return;
-    const response = await fetch(`${this.baseUrl}/api/internal/matter/devices`, { headers: { 'x-homehub-internal-token': this.token } });
-    if (!response.ok) throw new Error(`HomeHub returned HTTP ${response.status}`);
-    const devices = await response.json() as Device[];
-    for (const device of devices) {
-      if (this.registered.has(device.id)) continue;
-      await this.registerHomeHubDevice(device);
+    if (!this.token || this.reconciling) return;
+    this.reconciling = true;
+    try {
+      const response = await fetch(`${this.baseUrl}/api/internal/matter/devices`, { headers: { 'x-homehub-internal-token': this.token } });
+      if (!response.ok) throw new Error(`HomeHub returned HTTP ${response.status}`);
+      const devices = await response.json() as Device[];
+      const desiredIds = new Set(devices.map(device => device.id));
+
+      for (const id of [...this.registered.keys()]) {
+        if (!desiredIds.has(id)) await this.unregisterHomeHubDevice(id);
+      }
+
+      for (const device of devices) {
+        const signature = deviceSignature(device);
+        const current = this.registered.get(device.id);
+        if (current === signature) continue;
+        if (current !== undefined) await this.unregisterHomeHubDevice(device.id);
+        await this.registerHomeHubDevice(device, signature);
+      }
+    } finally {
+      this.reconciling = false;
     }
   }
 
-  private async registerHomeHubDevice(device: Device): Promise<void> {
+  private async unregisterHomeHubDevice(id: string): Promise<void> {
+    const endpoint = this.getDeviceById(`homehub-${id}`);
+    if (endpoint) {
+      await this.unregisterDevice(endpoint);
+      this.log.info(`Unregistered HomeHub device ${id}`);
+    }
+    this.registered.delete(id);
+  }
+
+  private async registerHomeHubDevice(device: Device, signature: string): Promise<void> {
     const endpointType = device.matterType === 'light' ? onOffLight : onOffPlugInUnit;
     const endpoint = new MatterbridgeEndpoint(endpointType, { id: `homehub-${device.id}` })
       .createDefaultBridgedDeviceBasicInformationClusterServer(
@@ -85,7 +113,7 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
     });
 
     await this.registerDevice(endpoint);
-    this.registered.add(device.id);
+    this.registered.set(device.id, signature);
     this.log.info(`Registered ${device.name} (${device.id}) as ${device.matterType}`);
   }
 
