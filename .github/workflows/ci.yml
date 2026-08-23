@@ -55,6 +55,10 @@ jobs:
           platforms: linux/amd64
       - name: Verify node-switchbot native load
         run: docker run --rm --entrypoint node qnaphomehub-server:ci -e "import('node-switchbot').then(() => console.log('node-switchbot import ok'))"
+      - name: Verify node-switchbot BLE device wiring fix
+        run: |
+          docker run --rm --entrypoint sh qnaphomehub-server:ci -c \
+            "grep -q 'bleConnection: this.bleConnection' /app/node_modules/node-switchbot/dist/switchbot.js"
       - name: Start HomeHub for integration smoke
         shell: bash
         run: |
