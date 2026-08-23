@@ -78,7 +78,7 @@ jobs:
           load: true
           tags: qnaphomehub-matterbridge:ci
           platforms: linux/amd64
-      - name: Smoke test Matterbridge secret login and HomeHub integration
+      - name: Smoke test Matterbridge plugin, secret login and HomeHub integration
         shell: bash
         run: |
           docker run -d --name matterbridge-ci --network qnaphomehub-ci -p 8283:8283 \
@@ -86,14 +86,17 @@ jobs:
             -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
             -e MATTERBRIDGE_PASSWORD=ci-matterbridge-password \
             qnaphomehub-matterbridge:ci
-          for attempt in {1..40}; do
-            if curl -fsS http://127.0.0.1:8283/health; then
+          for attempt in {1..60}; do
+            if curl -fsS http://127.0.0.1:8283/health >/dev/null 2>&1; then
               LOGIN="$(curl -fsS -X POST http://127.0.0.1:8283/api/login -H 'content-type: application/json' -d '{"password":"ci-matterbridge-password"}')"
-              echo "$LOGIN" | grep -q '"valid":true'
-              exit 0
+              if echo "$LOGIN" | grep -q '"valid":true' && docker logs homehub-ci 2>&1 | grep -q 'Matterbridge plugin status changed'; then
+                echo 'Matterbridge frontend login and QnapHomeHub plugin heartbeat verified'
+                exit 0
+              fi
             fi
             sleep 1
           done
+          docker logs homehub-ci
           docker logs matterbridge-ci
           exit 1
       - name: Integration logs on failure
