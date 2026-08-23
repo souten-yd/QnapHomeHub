@@ -1,0 +1,19 @@
+{
+  "name": "matterbridge-qnaphomehub",
+  "version": "0.1.0",
+  "description": "Matterbridge adapter for QnapHomeHub",
+  "type": "module",
+  "main": "dist/module.js",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "matterbridge": "3.10.6"
+  },
+  "devDependencies": {
+    "@types/node": "24.3.0",
+    "typescript": "5.9.2"
+  }
+}
