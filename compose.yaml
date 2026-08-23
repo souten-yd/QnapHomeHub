@@ -11,6 +11,7 @@ services:
     environment:
       PORT: "8787"
       DATA_DIR: /data
+      HOMEHUB_ADMIN_USERNAME_FILE: /run/secrets/homehub_admin_username
       HOMEHUB_ADMIN_PASSWORD_FILE: /run/secrets/homehub_admin_password
       HOMEHUB_INTERNAL_TOKEN_FILE: /run/secrets/homehub_internal_token
       SWITCHBOT_TOKEN_FILE: /run/secrets/switchbot_token
@@ -19,6 +20,7 @@ services:
     volumes:
       - ./data/homehub:/data
     secrets:
+      - homehub_admin_username
       - homehub_admin_password
       - homehub_internal_token
       - switchbot_token
@@ -44,6 +46,8 @@ services:
       - homehub_internal_token
 
 secrets:
+  homehub_admin_username:
+    file: ./secrets/homehub_admin_username.txt
   homehub_admin_password:
     file: ./secrets/homehub_admin_password.txt
   homehub_internal_token:
