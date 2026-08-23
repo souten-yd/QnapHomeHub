@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
-MB="/app/plugin/node_modules/.bin/matterbridge"
+MB="$(command -v matterbridge)"
+PLUGIN="${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN:-/usr/local/lib/node_modules/matterbridge-qnaphomehub}"
+HOME_DIR="${MATTERBRIDGE_HOMEDIR:-/data}"
 
-node /app/plugin/matterbridge-bootstrap.mjs
-"$MB" --homedir /data --add /app/plugin >/dev/null 2>&1 || true
-"$MB" --homedir /data --enable /app/plugin >/dev/null 2>&1 || true
-exec "$MB" --homedir /data --bridge --frontend 8283 --docker --no-ansi
+node "$PLUGIN/matterbridge-bootstrap.mjs"
+"$MB" --homedir "$HOME_DIR" --add "$PLUGIN" >/dev/null 2>&1 || true
+"$MB" --homedir "$HOME_DIR" --enable "$PLUGIN" >/dev/null 2>&1 || true
+exec "$MB" --homedir "$HOME_DIR" --bridge --frontend 8283 --docker --no-ansi
