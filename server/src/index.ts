@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { AuthManager } from './auth.js';
 import { ConfigStore, readSecret } from './config.js';
+import { uniqueDeviceName } from './device-names.js';
 import { diagnostics } from './diagnostics.js';
 import { SwitchBotManager } from './switchbot-manager.js';
 import type { RegisteredDevice } from './types.js';
@@ -14,13 +15,15 @@ const port = Number(process.env.PORT ?? '8787');
 const store = new ConfigStore(dataDir);
 await store.load();
 
-const [adminPassword, switchbotToken, switchbotSecret, internalToken, botPasswordsRaw] = await Promise.all([
+const [adminUsernameRaw, adminPassword, switchbotToken, switchbotSecret, internalToken, botPasswordsRaw] = await Promise.all([
+  readSecret('HOMEHUB_ADMIN_USERNAME'),
   readSecret('HOMEHUB_ADMIN_PASSWORD'),
   readSecret('SWITCHBOT_TOKEN'),
   readSecret('SWITCHBOT_SECRET'),
   readSecret('HOMEHUB_INTERNAL_TOKEN'),
   readSecret('SWITCHBOT_BOT_PASSWORDS'),
 ]);
+const adminUsername = adminUsernameRaw || 'admin';
 
 let botPasswords: Record<string, string> = {};
 if (botPasswordsRaw) {
@@ -28,7 +31,7 @@ if (botPasswordsRaw) {
   catch { console.warn('SWITCHBOT_BOT_PASSWORDS is not valid JSON; ignoring it'); }
 }
 
-const auth = new AuthManager(adminPassword);
+const auth = new AuthManager(adminUsername, adminPassword);
 const switchbot = new SwitchBotManager(() => store.get(), switchbotToken, switchbotSecret);
 const app = express();
 
@@ -91,9 +94,10 @@ app.post('/api/devices', async (req, res) => {
   if (!source) return void res.status(400).json({ error: 'Device is not in the latest scan results' });
   const config = store.get();
   if (config.devices.some(device => device.id === source.id)) return void res.status(409).json({ error: 'Device already registered' });
+  const requestedName = String(req.body.name || source.name || 'SwitchBot');
   const device: RegisteredDevice = {
     id: source.id,
-    name: String(req.body.name || source.name || 'SwitchBot'),
+    name: uniqueDeviceName(requestedName, config.devices),
     deviceType: source.deviceType,
     mac: source.mac,
     mode: req.body.mode === 'switch' ? 'switch' : 'press',
@@ -112,7 +116,7 @@ app.patch('/api/devices/:id', async (req, res) => {
   const old = config.devices[index]!;
   const next: RegisteredDevice = {
     ...old,
-    name: req.body.name !== undefined ? String(req.body.name) : old.name,
+    name: req.body.name !== undefined ? uniqueDeviceName(String(req.body.name), config.devices, old.id) : old.name,
     mode: req.body.mode === 'switch' ? 'switch' : req.body.mode === 'press' ? 'press' : old.mode,
     exposeMatter: req.body.exposeMatter !== undefined ? Boolean(req.body.exposeMatter) : old.exposeMatter,
     matterType: req.body.matterType === 'light' ? 'light' : req.body.matterType === 'outlet' ? 'outlet' : old.matterType,
