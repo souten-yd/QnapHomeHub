@@ -1,26 +1,25 @@
 # QnapHomeHub
 
-QNAP NAS を **SwitchBot のローカル Bluetooth ゲートウェイ**にし、Web UI と Matter/Alexa の両方から操作する Docker プロジェクトです。
+QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web UIとMatter/Alexaの両方から操作するDockerプロジェクトです。
 
-主対象は **QNAP TS-253Be (x86_64)** + USB Bluetooth ドングルです。
+主対象は **QNAP TS-253Be / x86_64 + USB Bluetoothドングル + Container Station** です。
 
-## できること
+## 主な機能
 
-- USB Bluetooth ドングルを Linux HCI 経由で直接利用 (`node-switchbot` + Noble)
-- QNAP の BlueZ D-Bus API に依存せず SwitchBot BLE を操作
-- Web UI から BLE スキャン、Bot 登録、Press / ON / OFF / 状態取得
-- 複数の同型 Bot が同じ名前で検出されても `Bot`, `Bot 2`, `Bot 3` のように自動で一意化
-- 登録した Bot を Matterbridge 経由で Alexa に公開
-- Alexa 互換性を優先し、Bot の Matter 型は既定で **Outlet**
-- `press` / `switch` モード、表示名、Matter Outlet/Light をデバイス単位で変更
-- Matter公開ON/OFFやデバイス設定変更を Matterbridge 側へ自動追従
-- HCI アダプター番号、スキャン時間、API fallback などは「詳細設定」に収納
-- SwitchBot OpenAPI Token / Secret は Docker secrets 対応
-- HomeHub 管理ユーザー名 / パスワード、内部APIトークン、Bot BLEパスワードも Docker secrets 対応
-- Matterbridge Web UI のパスワードも Docker secret から起動時に同期
-- Matter の QR、Fabric、commissioning、Matterbridge設定は Matterbridge Web UI から管理
-- GitHub Actions で TypeScript / test / Docker amd64 build / native module / 実コンテナ smoke test
-- `main` 更新時に GHCR へ `server` / `matterbridge` イメージを公開
+- USB BluetoothドングルをLinux HCI経由で直接利用 (`node-switchbot` + Noble)
+- QNAPの古いBlueZ D-Bus APIに依存せずSwitchBot BLEを操作
+- Web UIからBLEスキャン、Bot登録、Press / ON / OFF / 状態取得
+- コマンド操作時に **送信中 / 成功 / 失敗** をカード上へ表示
+- Web UI内の **Webデバッグ** から、API到達、BLE実行、Matterbridge heartbeat、HCI診断を追跡
+- UIテーマは **Black** / **Cyber** を切替可能。Blackが既定
+- 登録したBotをMatterbridge経由でAlexaへ公開
+- Alexa互換性を優先し、BotのMatter型は既定で **Outlet**
+- `press` / `switch` モード、表示名、Matter Outlet/Lightをデバイス単位で変更
+- Matter公開ON/OFFや設定変更をMatterbridgeへ自動反映
+- HomeHub管理ユーザー名 / パスワード、内部API token、SwitchBot API token/secret、Bot BLE passwordはDocker secretsで管理
+- Matterbridge Web UIのパスワードもHomeHubのDocker secretから同期
+- GitHub ActionsでTypeScript / test / Docker amd64 build / 実コンテナsmoke test
+- `main`更新時にGHCRへ`server` / `matterbridge`イメージを公開
 
 ## 構成
 
@@ -33,8 +32,7 @@ USB Bluetooth dongle → Linux hci0/hci1
      ▼
 ┌──────────────────────────────┐
 │ qnaphomehub :8787            │
-│                              │
-│ Web UI                       │
+│ Web UI / Web Debug           │
 │ node-switchbot / Noble       │
 │ BLE serial command queue     │
 └──────────────┬───────────────┘
@@ -42,57 +40,42 @@ USB Bluetooth dongle → Linux hci0/hci1
                ▼
 ┌──────────────────────────────┐
 │ Matterbridge :8283           │
-│ QnapHomeHub plugin           │
+│ matterbridge-qnaphomehub     │
 └──────────────┬───────────────┘
                │ Matter / mDNS
                ▼
           Echo / Alexa
 ```
 
-Bluetooth を所有するのは **HomeHub サービスだけ**です。Matterbridge プラグインは Bluetooth を直接開かず、内部 REST API を通して同じ BLE コマンドキューへ処理を依頼します。
-
-Web操作とAlexa操作が同時に発生しても、BLE処理は1本のシリアルキューを通ります。
-
-詳細: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+Bluetooth/HCIを所有するのは **HomeHubだけ**です。MatterbridgeはBluetoothを直接開かず、HomeHub内部REST APIを通して同じBLEコマンドキューを利用します。
 
 ---
 
-# 最短導入手順（QNAP / SSH）
+# 今回のQNAP実機導入手順
 
-以下は QNAP に SSH で入って作業する想定です。`sudo` / `systemctl` は使いません。
+以下は実際にTS-253Be上で進めた手順をベースにしています。QNAPでは`sudo`や`systemctl`を前提にしません。
 
-## 0. 前提
+## 1. Container Station / Dockerを確認
 
-QNAP 側で次を用意してください。
+QTSで **Container Station** をインストール・起動しておきます。
 
-- Container Station / Docker
-- USB Bluetooth ドングル
-- Git（リポジトリ取得用。なければQNAP/Entware等で導入）
-- Alexaアプリ
-- Matter対応Alexa/Echo（AlexaへMatterブリッジを登録する場合）
-
-まず確認します。
+SSHで:
 
 ```sh
-uname -m
+uname -a
 docker version
 docker compose version
-git --version
 ```
 
-TS-253Be では通常 `uname -m` は次です。
+主対象は`x86_64`です。
 
-```text
-x86_64
-```
-
-Docker Compose v2 が利用できれば、そのまま以下の手順で進められます。
+Container StationはDockerのGUI管理画面として利用できます。初期導入はSSHでComposeを起動し、その後の停止・起動・ログ確認はContainer Stationから行って構いません。
 
 ---
 
-## 1. USB Bluetooth / HCI を確認
+## 2. USB Bluetoothドングルを確認
 
-ドングルを挿した状態で実行します。
+USB Bluetoothドングルを挿し、次を実行します。
 
 ```sh
 echo '=== Kernel ==='
@@ -114,33 +97,24 @@ echo '=== bluetoothd (reference only) ==='
 bluetoothd -v 2>/dev/null || /usr/sbin/bluetoothd -v 2>/dev/null || true
 ```
 
-最低条件は、LinuxカーネルがUSBドングルを認識し、例えば次が存在することです。
+今回の実機では次の状態まで確認できました。
 
 ```text
+USB: 0a12:0001 Cambridge Silicon Radio Bluetooth Dongle
 /sys/class/bluetooth/hci0
+hci0: UP RUNNING
+HCI Version: 4.0
+btusb loaded
+bluetoothd 4.101
 ```
 
-または2本目なら:
-
-```text
-/sys/class/bluetooth/hci1
-```
-
-QNAP 標準 `bluetoothd` が古くても、このプロジェクトの主経路は BlueZ D-Bus ではなく **Noble / HCI直接アクセス**です。
-
-ただし次の場合は動きません。
-
-- QNAPカーネルがUSBドングルを認識していない
-- 必要な `btusb` / firmware が無い
-- QTSの別プロセスが同じHCIアダプターを排他的に使用している
-
-QTS側Bluetoothと競合する場合は、専用USBドングルを `hci1` として追加し、HomeHubの詳細設定で `HCIアダプター番号 = 1` にする方法を推奨します。
+`bluetoothd`が古くても、QnapHomeHubの主経路はBlueZ D-BusではなくNoble / raw HCIです。
 
 ---
 
-## 2. QnapHomeHub を取得
+## 3. QnapHomeHubを取得
 
-保存先は任意です。例として `/share/Container` が存在する場合:
+### 推奨: Gitを使える場合
 
 ```sh
 cd /share/Container
@@ -148,30 +122,57 @@ git clone https://github.com/souten-yd/QnapHomeHub.git
 cd QnapHomeHub
 ```
 
-`/share/Container` が無ければ、自分の共有フォルダ配下など書き込み可能な場所で構いません。
+### QNAPに`git`が無い場合
 
-既にclone済みなら:
+今回の実機では`git: command not found`だったため、**ZIP取得で導入できます**。
 
 ```sh
-cd /path/to/QnapHomeHub
-git pull --ff-only
+cd /share/Container
+
+wget -O QnapHomeHub.zip \
+  https://github.com/souten-yd/QnapHomeHub/archive/refs/heads/main.zip
+
+unzip QnapHomeHub.zip
+mv QnapHomeHub-main QnapHomeHub
+rm QnapHomeHub.zip
+cd QnapHomeHub
 ```
+
+`wget`が無ければ:
+
+```sh
+curl -L \
+  https://github.com/souten-yd/QnapHomeHub/archive/refs/heads/main.zip \
+  -o QnapHomeHub.zip
+```
+
+### Entwareの`opkg`について
+
+`/opt/bin/opkg`が存在していても、一般ユーザーには`/opt`への書き込み権限が無い場合があります。
+
+```sh
+ls -l /opt/bin/opkg
+```
+
+`opkg update`や`opkg install git`で`Permission denied`になる場合は、Git導入にこだわらず上記ZIP方式を使うのが最短です。
 
 ---
 
-## 3. Secrets を作る
+## 4. Secretsを作成
 
 ```sh
+cd /share/Container/QnapHomeHub
 chmod +x scripts/*.sh
 ./scripts/bootstrap-secrets.sh
 ```
 
-初回のみ次を聞かれます。
+作成後:
 
 ```text
-HomeHub admin username [admin]:
-HomeHub admin password:
+Secrets are ready under ./secrets
 ```
+
+となればOKです。
 
 作成されるファイル:
 
@@ -185,55 +186,11 @@ secrets/
 └── switchbot_bot_passwords.json
 ```
 
-役割:
+Matterbridge Web UIはユーザー名ではなくパスワードのみを使用します。HomeHubの`homehub_admin_password.txt`をMatterbridge側にも同期します。
 
-| Secret | 用途 |
-|---|---|
-| `homehub_admin_username.txt` | HomeHub Web UIユーザー名。既定 `admin` |
-| `homehub_admin_password.txt` | HomeHub Web UIパスワード。Matterbridge Web UIにも同期 |
-| `homehub_internal_token.txt` | HomeHub ↔ Matterbridge 内部API認証。自動生成 |
-| `switchbot_token.txt` | SwitchBot OpenAPI fallback用。BLEのみなら空で可 |
-| `switchbot_secret.txt` | SwitchBot OpenAPI fallback用。BLEのみなら空で可 |
-| `switchbot_bot_passwords.json` | Bot本体にBLEパスワードを設定している場合のみ |
+SwitchBot OpenAPIを使わずBLEだけで使う場合、`switchbot_token.txt` / `switchbot_secret.txt`は空で構いません。
 
-### Matterbridge のログインについて
-
-Matterbridge公式Web UIは **ユーザー名を持たずパスワードのみ**です。
-
-QnapHomeHubでは起動時に:
-
-```text
-secrets/homehub_admin_password.txt
-```
-
-をMatterbridge公式ストレージへ同期するため、Matterbridge Web UI (`:8283`) には **HomeHubと同じパスワード**でログインできます。
-
-### SwitchBot OpenAPIを使わない場合
-
-BLE直結だけなら次は空のままで構いません。
-
-```sh
-: > secrets/switchbot_token.txt
-: > secrets/switchbot_secret.txt
-```
-
-Web UIの **SwitchBot API fallback** もOFFのまま使ってください。
-
-### SwitchBot OpenAPI fallbackを使う場合
-
-SwitchBot側で取得したToken / Secretをそれぞれ1行で保存します。
-
-```sh
-printf '%s\n' 'YOUR_SWITCHBOT_TOKEN' > secrets/switchbot_token.txt
-printf '%s\n' 'YOUR_SWITCHBOT_SECRET' > secrets/switchbot_secret.txt
-chmod 600 secrets/switchbot_token.txt secrets/switchbot_secret.txt
-```
-
-値をGitHub Actions secretsへ入れる必要はありません。QNAP実行時のDocker secretsとしてのみ使用します。
-
-### Bot本体にBLEパスワードを設定している場合
-
-`secrets/switchbot_bot_passwords.json`:
+Bot本体に4文字BLEパスワードを設定している場合のみ、`switchbot_bot_passwords.json`へ設定します。
 
 ```json
 {
@@ -241,39 +198,34 @@ chmod 600 secrets/switchbot_token.txt secrets/switchbot_secret.txt
 }
 ```
 
-キーにはDevice ID、またはコロンを除いたMACを指定できます。
-
-パスワードなしなら:
-
-```json
-{}
-```
-
 ---
 
-## 4. 診断を先に実行（推奨）
+## 5. QNAP診断スクリプトを実行
 
 ```sh
 ./scripts/qnap-diagnose.sh
 ```
 
-ここで少なくとも以下を確認します。
+確認ポイント:
 
+- USB Bluetoothドングルが見える
+- `/sys/class/bluetooth/hci0` または`hci1`がある
+- `hciconfig`で`UP RUNNING`
+- `btusb`等がロード済み
 - Dockerが起動している
-- USBドングルが見える
-- `/sys/class/bluetooth/hci0` または `hci1` が存在
-- Bluetooth kernel moduleが読み込まれている
+
+今回の実機ではここまで正常でした。
 
 ---
 
-## 5. Dockerを起動
-
-### 推奨: GitHub Actionsでビルド済みのGHCRイメージを使用
+## 6. Dockerイメージを取得して起動
 
 ```sh
 docker compose pull
 docker compose up -d
 ```
+
+今回の実機ではGHCRから`homehub` / `matterbridge`の両イメージを正常にpullできました。
 
 状態確認:
 
@@ -281,73 +233,60 @@ docker compose up -d
 docker compose ps
 ```
 
-ログ:
+正常例:
+
+```text
+qnaphomehub               Up
+qnaphomehub-matterbridge  Up (healthy)
+```
+
+初期ログ:
 
 ```sh
 docker compose logs --tail=100 homehub
-docker compose logs --tail=100 matterbridge
+docker compose logs --tail=200 matterbridge
 ```
 
-リアルタイムログ:
-
-```sh
-docker compose logs -f homehub matterbridge
-```
-
-### GHCR pull が拒否される場合
-
-初回パッケージ公開設定等でGHCRを匿名pullできない場合は、ソースからローカルビルドできます。
+GHCR pullが使えない場合:
 
 ```sh
 docker compose build --no-cache
 docker compose up -d
 ```
 
-この場合もアプリ設定やMatterデータの配置は同じです。
-
-> `homehub` はQNAPのBluetooth/HCI差異を吸収するため、初期版では `privileged: true` です。実機検証後に必要capabilityへ縮小可能です。
-
 ---
 
-## 6. HomeHub Web UI を開く
+## 7. HomeHubを開く
 
-ブラウザから:
+ブラウザ:
 
 ```text
 http://QNAP-IP:8787
 ```
 
-例:
+`bootstrap-secrets.sh`で設定したユーザー名・パスワードでログインします。
+
+画面右上でテーマを選べます。
 
 ```text
-http://192.168.68.57:8787
+BLACK  ← 既定。暗い黒/グラファイトUI
+CYBER  ← シアン/マゼンタのサイバーUI
 ```
-
-ログインには `bootstrap-secrets.sh` で設定した:
-
-```text
-ユーザー名: homehub_admin_username.txt
-パスワード: homehub_admin_password.txt
-```
-
-を使用します。
 
 ---
 
-## 7. SwitchBot をBluetooth登録
-
-通常は以下だけです。
+## 8. SwitchBotをスキャン・登録
 
 1. **Bluetoothをスキャン**
-2. SwitchBot Botが表示されるのを待つ
-3. 必要なら名前を変更
-4. `Press` または `Switch` を選ぶ
+2. SwitchBot Botが表示されるのを確認
+3. 名前を設定
+4. `Press` または`Switch`を選択
 5. **登録**
-6. **押す / ON / OFF / 状態** でWebから実機確認
+6. 登録済みカードから **押す / ON / OFF / 状態** を試す
 
-推奨設定:
+推奨:
 
-### 物理ボタンを1回押す用途
+### 物理ボタンを押す用途
 
 ```text
 Mode       = Press
@@ -355,7 +294,7 @@ Matter     = ON
 MatterType = Outlet
 ```
 
-### ON/OFF状態を保持する用途
+### ON/OFFを保持する用途
 
 ```text
 Mode       = Switch
@@ -363,118 +302,154 @@ Matter     = ON
 MatterType = Outlet
 ```
 
-Alexa互換性を優先して **Outletが既定かつ推奨**です。
+---
 
-同名Botを複数登録した場合は `Bot`, `Bot 2`, `Bot 3` のように自動で一意化します。
+# コマンドボタンの確認方法
+
+登録済みカードで`押す`等を押すと、現在はカード上に必ず状態を表示します。
+
+```text
+待機中
+  ↓
+押す をHomeHubへ送信中…
+  ↓
+押す 完了 · BLE
+```
+
+失敗時:
+
+```text
+失敗: <BLEエラー理由>
+```
+
+さらにJSON結果もカード内に表示します。
+
+**重要:** ボタン押下は`POST /api/devices/:id/:action`へ接続されています。WebデバッグではHTTPリクエスト到達とBLEコマンド実行を別イベントとして確認できます。
 
 ---
 
-## 8. Matterbridge / Alexa を設定
+# Webデバッグ
 
-HomeHub Web UIの **Matter設定を開く**、または直接:
+HomeHubのメイン画面に **Webデバッグ** パネルがあります。SSHで`docker compose logs -f`を開かなくても主要な問題を追跡できます。
+
+表示内容:
+
+- HomeHub online状態
+- HCI番号 (`hci0`等)
+- BLE検出台数
+- 登録デバイス数
+- Matterbridge HTTP到達状態
+- Matterbridge QnapHomeHub plugin heartbeat
+- Matterbridgeへ公開済みデバイス数
+- `hciconfig -a`
+- `uname -a`
+- 直近のスキャンイベント
+- WebからのコマンドHTTP到達
+- BLEコマンド開始 / 成功 / 失敗
+- Matterbridgeからのコマンド到達
+- 設定変更 / 再起動イベント
+
+既定では2秒ごとに自動更新します。
+
+### ボタンが本当にAPIへ届いているか
+
+`押す`を押した直後にWebデバッグへ次が出れば、ブラウザ→HomeHub APIは接続されています。
+
+```text
+api.web        Command HTTP request received
+command        Device command requested
+command        Executing device command
+```
+
+成功なら:
+
+```text
+command        Device command succeeded
+api.web        Command HTTP request completed
+```
+
+失敗なら:
+
+```text
+command        Device command failed
+api.web        Command HTTP request completed with failure
+```
+
+このため「ボタンが未接続」なのか「BLE処理で失敗」なのかをWebだけで判別できます。
+
+---
+
+# Matterbridge / Alexa
+
+Matterbridge:
 
 ```text
 http://QNAP-IP:8283
 ```
 
-を開きます。
+Matterbridge Web UIのパスワードはHomeHubと同じです。
 
-Matterbridge Web UIのログインパスワードは:
+## QnapHomeHub pluginが表示されない場合
 
-```text
-secrets/homehub_admin_password.txt
-```
+Matterbridge 3.10.6は、プラグインのランタイム`package.json`に`matterbridge`自身がdependencies/devDependenciesとして含まれているとプラグインを拒否します。
 
-と同じです。
+QnapHomeHubのDocker buildではビルド後にdevDependenciesを削除した**runtime用package.json**だけをMatterbridgeイメージへ入れます。
 
-Matterbridge側で以下を確認できます。
-
-- Matter commissioning
-- QR pairing code
-- manual pairing code
-- Fabric / session
-- Fabric削除
-- Matterbridge設定
-- Matter / Matterbridgeログ
-
-### Alexaアプリへ追加
-
-1. Matterbridge Web UIでペアリングQRを表示
-2. Alexaアプリを開く
-3. デバイス追加を選択
-4. Matterデバイスとして追加
-5. MatterbridgeのQRコードを読み取る
-6. QnapHomeHubでMatter公開ONになっているBotがAlexa側へ出ることを確認
-7. Alexaアプリまたは音声で操作
-
-Matter/mDNSのため、QNAPとEcho/Alexaコントローラは同一LANから相互到達できる構成を推奨します。VLANやmDNS遮断がある場合はペアリング/検出に失敗することがあります。
-
----
-
-# Web UIの使い方
-
-## Press モード
-
-Matter の ON を受けると:
+またMatterbridge起動時の:
 
 ```text
-Alexa ON
-  ↓
-Matter Outlet ON
-  ↓
-HomeHub press()
-  ↓
-Matter状態をOFFへ戻す
+matterbridge --add ...
+matterbridge --enable ...
 ```
 
-モーメンタリボタンとして扱います。
+の出力を隠さないため、登録エラーはMatterbridgeログへそのまま表示されます。
 
-## Switch モード
+```sh
+docker compose logs --tail=300 matterbridge
+```
+
+HomeHubの **Webデバッグ** でも次を確認できます。
 
 ```text
-Alexa ON  → SwitchBot turnOn()
-Alexa OFF → SwitchBot turnOff()
+MATTERBRIDGE
+HTTP OK · ready · 2 devices
 ```
 
-## デバイス設定
+`HTTP OK · not-seen`なら、Matterbridge本体は起動しているがQnapHomeHub pluginがロードされていません。
 
-登録済みデバイスの **デバイス設定** を開いた場合だけ変更できます。
+`ready`になればMatterbridge pluginからHomeHubへheartbeatが届いています。
 
-- 表示名
-- Press / Switch
-- Matter Outlet / Light
+## Alexaへ追加
 
-Matter公開のON/OFFや設定変更はMatterbridgeへ自動追従します。
+1. QnapHomeHubで対象BotのMatterをON
+2. MatterbridgeでQnapHomeHub pluginとデバイスを確認
+3. Matterbridgeのcommissioning QRを表示
+4. Alexaアプリ → デバイス追加 → Matter
+5. QRを読み取る
+6. Alexaから操作
+
+Matter/mDNSのため、QNAPとEcho/Alexaコントローラは同一LANから相互到達できる構成を推奨します。
 
 ---
 
 # 詳細設定
 
-通常は変更不要です。
+通常は初期値で構いません。
 
-## HCI アダプター
-
-既定:
+## HCIアダプター番号
 
 ```text
-0 → hci0
+0 = hci0
+1 = hci1
 ```
 
-例えばQNAP側が内蔵/既存Bluetoothを `hci0` として使用し、追加USBドングルが `hci1` の場合:
-
-```text
-HCIアダプター番号 = 1
-```
-
-この値はNoble初期化前に `NOBLE_HCI_DEVICE_ID` へ反映されるため、変更後は **HomeHubコンテナ再起動** が必要です。
-
-Web UIの再起動ボタン、またはSSH:
+HCI番号を変えた場合はHomeHub再起動が必要です。
 
 ```sh
 docker compose restart homehub
 ```
 
-## BLE スキャン時間
+## BLEスキャン時間
 
 既定:
 
@@ -482,107 +457,80 @@ docker compose restart homehub
 10000 ms
 ```
 
-変更範囲:
-
-```text
-3000 - 60000 ms
-```
-
-検出が不安定なら15～30秒程度へ増やしてください。
+検出が不安定なら15～30秒程度へ増やします。
 
 ## SwitchBot API fallback
 
-既定は **OFF**。
-
-ONにすると、BLE操作失敗時にToken / Secretが設定済みの場合だけOpenAPI fallbackを利用します。
-
-ローカルBLE優先で使う場合はOFF推奨です。
+既定OFFです。BLEローカル運用ではOFF推奨です。
 
 ---
 
-# Secretを変更する
+# Container Stationでの運用
 
-例: 管理パスワード変更
+`docker compose up -d`で作成したコンテナはContainer Stationから確認できます。
 
-```sh
-printf '%s\n' 'NEW_PASSWORD' > secrets/homehub_admin_password.txt
-chmod 600 secrets/homehub_admin_password.txt
+```text
+qnaphomehub
+qnaphomehub-matterbridge
 ```
 
-Secretはプロセス起動時に読み込むため、変更後は再作成します。
+Container Stationから以下を行えます。
 
-```sh
-docker compose up -d --force-recreate
-```
+- 起動
+- 停止
+- 再起動
+- コンテナログ確認
+- CPU/RAM確認
 
-Matterbridgeも起動時に同じパスワードを公式ストレージへ再同期します。
+初期版ではQNAP上のraw HCI差異を吸収するためHomeHubは`privileged: true`を使用します。MatterbridgeはBluetoothを直接利用しません。
 
 ---
 
 # 更新手順
 
-Matter/Fabric情報を保持するため、`data/matterbridge` を削除しないでください。
+Matter/Fabric情報を保持するため、`data/matterbridge`と`secrets`を削除しないでください。
 
-まず任意でバックアップ:
-
-```sh
-cp -a data "data.backup.$(date +%Y%m%d-%H%M%S)"
-```
-
-更新:
+## Git cloneで導入した場合
 
 ```sh
+cd /share/Container/QnapHomeHub
 git pull --ff-only
 docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-ローカルビルド運用の場合:
+## ZIPで導入した場合
+
+Dockerイメージだけの更新であれば:
 
 ```sh
-git pull --ff-only
-docker compose build --pull
+cd /share/Container/QnapHomeHub
+docker compose pull
 docker compose up -d --remove-orphans
 ```
 
-状態確認:
+`compose.yaml`やscripts自体が変更されたリリースでは、新しいZIPを別フォルダへ展開し、既存の`secrets/`と`data/`を保持して移行してください。
 
-```sh
-docker compose ps
-docker compose logs --tail=100 homehub matterbridge
-```
+将来的にはHomeHub Web UIからGHCRイメージ更新とrollbackを行うワンクリック更新を追加予定です。
 
 ---
 
 # 停止 / 再起動
 
-停止:
-
 ```sh
+# 停止
 docker compose down
-```
 
-起動:
-
-```sh
+# 起動
 docker compose up -d
-```
 
-再起動:
-
-```sh
+# 全体再起動
 docker compose restart
-```
 
-HomeHubだけ:
-
-```sh
+# HomeHubのみ
 docker compose restart homehub
-```
 
-Matterbridgeだけ:
-
-```sh
+# Matterbridgeのみ
 docker compose restart matterbridge
 ```
 
@@ -590,46 +538,45 @@ docker compose restart matterbridge
 
 # バックアップ対象
 
-必須:
-
 ```text
 data/homehub/
 data/matterbridge/
 secrets/
 ```
 
-特にMatterペアリング済みの場合、次を消すと再ペアリングが必要になる可能性があります。
-
-```text
-data/matterbridge/
-```
+Matterペアリング済みの場合、`data/matterbridge/`を削除すると再commissioningが必要になる可能性があります。
 
 ---
 
-# トラブルシューティング
+# CLIトラブルシューティング
 
-## Web UIが開かない
+Webデバッグで足りない場合のみSSHログを使います。
 
 ```sh
 docker compose ps
-docker compose logs --tail=200 homehub
+docker compose logs --tail=300 homehub
+docker compose logs --tail=300 matterbridge
+```
+
+リアルタイム:
+
+```sh
+docker compose logs -f homehub matterbridge
+```
+
+HomeHub health:
+
+```sh
 curl http://127.0.0.1:8787/api/health
 ```
 
-正常例:
-
-```json
-{"status":"ok"}
-```
-
-## Matterbridge Web UIが開かない
+Matterbridge health:
 
 ```sh
-docker compose logs --tail=200 matterbridge
 curl http://127.0.0.1:8283/health
 ```
 
-## SwitchBotを検出しない
+Bluetooth:
 
 ```sh
 ./scripts/qnap-diagnose.sh
@@ -638,85 +585,44 @@ hciconfig -a 2>/dev/null
 ps | grep '[b]luetoothd'
 ```
 
-確認ポイント:
-
-1. USBドングルがQNAPカーネルに認識されているか
-2. `hci0` / `hci1` の番号がWeb設定と一致しているか
-3. QTSの`bluetoothd`等が同じHCIを使用していないか
-4. SwitchBotとの距離が遠すぎないか
-5. BotにBLEパスワードがある場合 `switchbot_bot_passwords.json` が正しいか
-
-QTS側と競合する場合は、専用USBドングルを追加し別HCI番号をHomeHub専用にするのが推奨です。
-
-詳細: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-
 ---
 
-# Docker Compose を既存プロジェクトへ組み込む
+# GitHub Actions / GHCR
 
-QnapHomeHub は2サービス構成なので、既存Composeにも組み込めます。
-
-重要条件:
-
-- `homehub` / `matterbridge` ともMatter/mDNSのため基本は `network_mode: host`
-- HCIを使用するのは `homehub` だけ
-- `homehub_internal_token` secretを両サービスへ渡す
-- `homehub_admin_password` secretをMatterbridgeにも渡す
-- `data/homehub` と `data/matterbridge` を永続化
-- Matterbridge pluginはHomeHub内部REST APIのみを利用し、Bluetoothには直接アクセスさせない
-
----
-
-# GitHub Actions
-
-## CI
-
-`.github/workflows/ci.yml`
-
-以下を検証します。
+CIでは以下を検証します。
 
 - Web UI JavaScript構文
-- Matterbridge bootstrap JavaScript構文
 - shell script構文
 - `docker compose config`
 - server typecheck / test / build
 - Matterbridge plugin typecheck / build
-- server Docker `linux/amd64` build
-- Docker内で `node-switchbot` native moduleを実import
-- HomeHub実コンテナ起動 + `/api/health`
-- Matterbridge Docker `linux/amd64` build
-- HomeHub + Matterbridge同一Dockerネットワークでの統合起動
+- server Docker amd64 build
+- `node-switchbot` native import
+- HomeHub実コンテナ `/api/health`
+- Matterbridge Docker amd64 build
 - Matterbridge `/health`
-- Docker secret相当のパスワード同期後 `/api/login` 成功
+- Matterbridge Web password同期/login
 
-## GHCR
-
-`.github/workflows/docker-publish.yml`
-
-`main`へマージすると:
+mainへマージすると次を公開します。
 
 ```text
 ghcr.io/souten-yd/qnaphomehub:server
 ghcr.io/souten-yd/qnaphomehub:matterbridge
 ```
 
-を `linux/amd64` で公開します。
-
-GitHub ActionsへSwitchBot Token / Secret、HomeHubアカウント、パスワードを登録する必要はありません。これらは **QNAP実行時のみ Docker secretsとして読み込み、Docker imageへ埋め込みません**。
-
-`.dockerignore` で `secrets/` と `data/` をDocker build contextからも除外しています。
+SecretsはDocker imageへ埋め込みません。`.dockerignore`でも`secrets/`と`data/`を除外しています。
 
 ---
 
 # セキュリティ境界
 
 - HomeHub Web API: `homehub_admin_username` + `homehub_admin_password`
-- Matterbridge Web UI: `homehub_admin_password` を起動時に同期
-- Matterbridge → HomeHub内部API: ランダム `homehub_internal_token`
+- Matterbridge Web UI: `homehub_admin_password`を起動時に同期
+- Matterbridge → HomeHub内部API: ランダム`homehub_internal_token`
 - SwitchBot Token / Secret: Docker secretから読み込み、Web APIへ値を返さない
 - Bot BLE password: secret JSONから読み込み、Web APIへ値を返さない
-- Secrets: Git管理対象外 + Docker build context対象外
+- Webデバッグ: HomeHubログイン後のみ閲覧可能。secret本体は記録しない
 
-## ライセンス
+## License
 
-QnapHomeHub自体はMIT Licenseです。依存するMatterbridge / node-switchbot等は各プロジェクトのライセンスに従います。
+QnapHomeHub自体はMIT Licenseです。Matterbridge / node-switchbot等は各プロジェクトのライセンスに従います。
