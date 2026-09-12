@@ -49,6 +49,7 @@ export default function initializePlugin(matterbridge: PlatformMatterbridge, log
 
 export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
   private readonly baseUrl = process.env.QNAP_HOME_HUB_URL ?? 'http://127.0.0.1:8787';
+  private readonly softwareVersion = process.env.QNAPHOMEHUB_VERSION ?? '0.0.0';
   private token = '';
   private timer?: NodeJS.Timeout;
   private registered = new Map<string, string>();
@@ -136,7 +137,7 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
         'QnapHomeHub',
         device.deviceType || 'SwitchBot',
         20100,
-        '0.2.1',
+        this.softwareVersion,
       )
       .createDefaultPowerSourceWiredClusterServer()
       .addRequiredClusters();
@@ -162,7 +163,7 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
           'QnapHomeHub',
           'PC Force Shutdown',
           20101,
-          '0.2.1',
+          this.softwareVersion,
         )
         .createDefaultPowerSourceWiredClusterServer()
         .addRequiredClusters();
