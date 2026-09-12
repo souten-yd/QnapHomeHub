@@ -156,7 +156,7 @@ function configureDeviceControls(article, device) {
   forceOff.classList.toggle('hidden', !pcPower);
   on.classList.toggle('hidden', pcPower || pressMode);
   off.classList.toggle('hidden', pcPower || pressMode);
-  forceOff.textContent = `強制終了（${device.forceHoldSeconds ?? 10}秒）`;
+  forceOff.textContent = '強制終了';
 }
 
 function syncProfileSettings(article) {
