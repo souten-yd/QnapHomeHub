@@ -164,8 +164,15 @@ app.post('/api/internal/matter/status', internalAuth, (req, res) => {
 app.post('/api/internal/devices/:id/:action', internalAuth, async (req, res) => {
   try {
     const id = routeParam(req.params.id);
-    const action = routeParam(req.params.action) as 'press' | 'on' | 'off' | 'status';
-    if (!['press', 'on', 'off', 'status'].includes(action)) return void res.status(400).json({ error: 'Unknown action' });
+    const action = routeParam(req.params.action) as DeviceAction;
+    if (!['press', 'on', 'off', 'status', 'power', 'forceOff'].includes(action)) {
+      return void res.status(400).json({ error: 'Unknown action' });
+    }
+    const registered = store.get().devices.find(device => device.id === id);
+    if (!registered) return void res.status(404).json({ error: 'Device not found' });
+    if ((action === 'power' || action === 'forceOff') && registered.controlProfile !== 'pc-power') {
+      return void res.status(400).json({ error: 'PC power actions require the PC power control profile' });
+    }
     res.json(await runDeviceCommand(id, action, 'matterbridge'));
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
@@ -318,50 +325,54 @@ app.post('/api/devices/:id/:action', async (req, res) => {
 });
 app.get('/api/diagnostics', async (_req, res) => res.json(await diagnostics()));
 app.get('/api/debug/status', async (req, res) => {
-  const limit = Number(req.query.limit ?? 120);
+  const limit = Math.min(250, Math.max(10, Number(req.query.limit) || 120));
+  const config = store.get();
   res.json({
-    now: new Date().toISOString(),
+    at: new Date().toISOString(),
     homehub: {
       version: appVersion,
-      hciDeviceId: store.get().hciDeviceId,
+      hciDeviceId: config.hciDeviceId,
       discoveredCount: switchbot.listDiscovered().length,
-      registeredCount: store.get().devices.length,
+      registeredCount: config.devices.length,
       discovered: switchbot.listDiscovered(),
     },
-    matterbridge: {
-      ...matterStatus,
-      http: await matterbridgeHealth(),
-    },
+    matterbridge: { ...matterStatus, http: await matterbridgeHealth() },
     system: await diagnostics(),
     events: debug.list(limit),
   });
 });
-app.post('/api/debug/clear', (_req, res) => {
-  debug.clear();
-  debug.add('info', 'debug', 'Web debug event history cleared');
-  res.json({ ok: true });
-});
+app.post('/api/debug/clear', (_req, res) => { debug.clear(); res.status(204).end(); });
 app.post('/api/system/restart', (_req, res) => {
-  debug.add('warn', 'system', 'HomeHub restart requested from Web UI');
-  res.json({ ok: true });
-  setTimeout(() => process.exit(0), 250).unref();
+  debug.add('warn', 'system', 'Restart requested from Web UI');
+  res.status(202).json({ accepted: true });
+  setTimeout(() => process.kill(process.pid, 'SIGTERM'), 150).unref();
 });
 
-const publicDir = path.resolve(here, '../public');
-app.use(express.static(publicDir));
-app.use((_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
+app.use(express.static(path.resolve(here, '../public')));
+app.get('*splat', (_req, res) => res.sendFile(path.resolve(here, '../public/index.html')));
 
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`QnapHomeHub ${appVersion} listening on http://0.0.0.0:${port}`);
-  debug.add('info', 'system', 'QnapHomeHub HTTP server is ready', { port, version: appVersion, hciDeviceId: store.get().hciDeviceId });
+  console.log(`QnapHomeHub listening on http://0.0.0.0:${port}`);
+  debug.add('info', 'system', 'QnapHomeHub HTTP server is ready', {
+    port,
+    authRequired: auth.required,
+    version: appVersion,
+  });
 });
-if (store.get().scanOnStartup) switchbot.scan().catch(error => debug.add('error', 'ble.scan', 'Startup scan failed', { error: (error as Error).message }));
 
-const shutdown = async () => {
-  debug.add('info', 'system', 'QnapHomeHub shutting down');
+if (store.get().scanOnStartup) {
+  setTimeout(() => void switchbot.scan().catch(error => {
+    console.error('Initial BLE scan failed', error);
+    debug.add('error', 'ble.scan', 'Initial BLE scan failed', { error: (error as Error).message });
+  }), 1500).unref();
+}
+
+async function shutdown(signal: string): Promise<void> {
+  console.log(`${signal}: shutting down`);
+  debug.add('warn', 'system', 'QnapHomeHub is shutting down', { signal });
   server.close();
-  await switchbot.cleanup().catch(() => undefined);
+  await switchbot.cleanup();
   process.exit(0);
-};
-process.on('SIGTERM', () => void shutdown());
-process.on('SIGINT', () => void shutdown());
+}
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));

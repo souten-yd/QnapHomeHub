@@ -46,6 +46,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: version
+        name: Resolve HomeHub version
+        shell: bash
+        run: |
+          VERSION="$(node -p 'require("./server/package.json").version')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -56,7 +62,7 @@ jobs:
           tags: qnaphomehub-server:ci
           platforms: linux/amd64
           build-args: |
-            HOMEHUB_VERSION=0.2.0
+            HOMEHUB_VERSION=${{ steps.version.outputs.version }}
       - name: Verify node-switchbot native load
         run: docker run --rm --entrypoint node qnaphomehub-server:ci -e "import('node-switchbot').then(() => console.log('node-switchbot import ok'))"
       - name: Verify node-switchbot BLE device wiring fix
@@ -65,6 +71,8 @@ jobs:
             "grep -q 'bleConnection: this.bleConnection' /app/node_modules/node-switchbot/dist/switchbot.js"
       - name: Start HomeHub for integration smoke
         shell: bash
+        env:
+          HOMEHUB_VERSION: ${{ steps.version.outputs.version }}
         run: |
           docker network create qnaphomehub-ci
           docker run -d --name homehub-ci --network qnaphomehub-ci -p 8787:8787 \
@@ -74,7 +82,7 @@ jobs:
             qnaphomehub-server:ci
           for attempt in {1..20}; do
             HEALTH="$(curl -fsS http://127.0.0.1:8787/api/health 2>/dev/null || true)"
-            if echo "$HEALTH" | grep -q '"status":"ok"' && echo "$HEALTH" | grep -q '"version":"0.2.0"'; then exit 0; fi
+            if echo "$HEALTH" | grep -q '"status":"ok"' && echo "$HEALTH" | grep -q "\"version\":\"${HOMEHUB_VERSION}\""; then exit 0; fi
             sleep 1
           done
           docker logs homehub-ci
@@ -87,6 +95,12 @@ jobs:
           load: true
           tags: qnaphomehub-matterbridge:ci
           platforms: linux/amd64
+          build-args: |
+            HOMEHUB_VERSION=${{ steps.version.outputs.version }}
+      - name: Verify PC forced shutdown Matter endpoint is built
+        run: |
+          docker run --rm --entrypoint sh qnaphomehub-matterbridge:ci -c \
+            "grep -q 'forceoff' /usr/local/lib/node_modules/matterbridge-qnaphomehub/dist/module.js && grep -q 'forceOff' /usr/local/lib/node_modules/matterbridge-qnaphomehub/dist/module.js"
       - name: Smoke test Matterbridge plugin, secret login and HomeHub integration
         shell: bash
         run: |
