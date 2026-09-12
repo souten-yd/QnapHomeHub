@@ -22,7 +22,7 @@ async function readSecret(name) {
 }
 
 const internalToken = await readSecret('HOMEHUB_INTERNAL_TOKEN');
-let config = { autoUpdate: true };
+let config = { autoUpdate: false };
 let state = {
   phase: 'idle',
   currentVersion: null,
