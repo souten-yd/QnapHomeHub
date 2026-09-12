@@ -8,7 +8,7 @@ RUN npm run typecheck && npm run build && \
 
 # Reuse Matterbridge's official, version-pinned Docker runtime. This preserves
 # the upstream frontend, Matter runtime dependency layout and Docker healthcheck.
-FROM luligu/matterbridge:3.10.6
+FROM luligu/matterbridge:3.10.8
 
 USER root
 ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub
