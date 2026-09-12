@@ -1,0 +1,143 @@
+name: Track tested Matterbridge stable
+
+on:
+  schedule:
+    - cron: '23 3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'matterbridge-plugin/**'
+      - 'docker/matterbridge*'
+      - '.github/workflows/matterbridge-upstream.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: matterbridge-upstream-stable
+  cancel-in-progress: false
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve latest upstream stable
+        id: upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="$(gh api repos/Luligu/matterbridge/releases/latest --jq '.tag_name')"
+          VERSION="${TAG#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unexpected Matterbridge release tag: $TAG" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing Matterbridge $VERSION"
+
+      - name: Prefer latest QnapHomeHub stable source
+        id: homehub
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          STABLE_TAG="$(gh release view --json tagName --jq '.tagName' 2>/dev/null || true)"
+          if [[ -n "$STABLE_TAG" ]]; then
+            git checkout "$STABLE_TAG"
+            echo "source=$STABLE_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "No QnapHomeHub release exists yet; testing current main source"
+            echo "source=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build HomeHub integration target
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/server.Dockerfile
+          push: false
+          load: true
+          tags: qnaphomehub-server:upstream-test
+          platforms: linux/amd64
+
+      - name: Build latest Matterbridge candidate
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/matterbridge.Dockerfile
+          push: false
+          load: true
+          tags: qnaphomehub-matterbridge:upstream-test
+          platforms: linux/amd64
+          build-args: |
+            MATTERBRIDGE_VERSION=${{ steps.upstream.outputs.version }}
+
+      - name: Integration smoke with HomeHub plugin heartbeat
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker network create qnaphomehub-upstream-test
+          docker run -d --name homehub-upstream-test --network qnaphomehub-upstream-test -p 8787:8787 \
+            -e HOMEHUB_ADMIN_USERNAME=admin \
+            -e HOMEHUB_ADMIN_PASSWORD=ci-password \
+            -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
+            qnaphomehub-server:upstream-test
+          for attempt in {1..30}; do
+            curl -fsS http://127.0.0.1:8787/api/health >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          docker run -d --name matterbridge-upstream-test --network qnaphomehub-upstream-test -p 8283:8283 \
+            -e QNAP_HOME_HUB_URL=http://homehub-upstream-test:8787 \
+            -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
+            -e MATTERBRIDGE_PASSWORD=ci-matterbridge-password \
+            qnaphomehub-matterbridge:upstream-test
+
+          success=0
+          for attempt in {1..90}; do
+            if curl -fsS http://127.0.0.1:8283/health >/dev/null 2>&1; then
+              LOGIN="$(curl -fsS -X POST http://127.0.0.1:8283/api/login -H 'content-type: application/json' -d '{"password":"ci-matterbridge-password"}' || true)"
+              if echo "$LOGIN" | grep -q '"valid":true' && docker logs homehub-upstream-test 2>&1 | grep -q 'Matterbridge plugin status changed'; then
+                success=1
+                break
+              fi
+            fi
+            sleep 1
+          done
+          if [[ "$success" != 1 ]]; then
+            docker logs homehub-upstream-test || true
+            docker logs matterbridge-upstream-test || true
+            exit 1
+          fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish only the tested candidate
+        shell: bash
+        run: |
+          VERSION='${{ steps.upstream.outputs.version }}'
+          IMAGE='ghcr.io/${{ github.repository_owner }}/qnaphomehub'
+          docker tag qnaphomehub-matterbridge:upstream-test "$IMAGE:matterbridge-tested"
+          docker tag qnaphomehub-matterbridge:upstream-test "$IMAGE:matterbridge-upstream-$VERSION"
+          docker push "$IMAGE:matterbridge-tested"
+          docker push "$IMAGE:matterbridge-upstream-$VERSION"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker rm -f matterbridge-upstream-test homehub-upstream-test 2>/dev/null || true
+          docker network rm qnaphomehub-upstream-test 2>/dev/null || true
