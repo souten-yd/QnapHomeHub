@@ -63,14 +63,15 @@ services:
       UPDATER_BIND: 127.0.0.1
       UPDATER_PORT: "8788"
       DATA_DIR: /data
-      PROJECT_DIR: /project
+      PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
+      QNAP_HOMEHUB_PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
       COMPOSE_PROJECT_NAME: qnaphomehub
       GITHUB_REPOSITORY: souten-yd/QnapHomeHub
       GHCR_IMAGE: ghcr.io/souten-yd/qnaphomehub
       HOMEHUB_INTERNAL_TOKEN_FILE: /run/secrets/homehub_internal_token
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/project:ro
+      - ./:${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}:ro
       - ./data/updater:/data
     secrets:
       - homehub_internal_token
