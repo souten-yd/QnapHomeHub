@@ -114,8 +114,8 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
         this.matterbridge.aggregatorVendorId,
         'QnapHomeHub',
         device.deviceType || 'SwitchBot',
-        10000,
-        '0.1.0',
+        20000,
+        '0.2.0',
       )
       .createDefaultPowerSourceWiredClusterServer()
       .addRequiredClusters();
