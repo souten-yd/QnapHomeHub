@@ -1,4 +1,5 @@
 ARG MATTERBRIDGE_VERSION=3.10.8
+ARG HOMEHUB_VERSION=0.0.0
 
 FROM node:24-bookworm AS plugin-build
 ARG MATTERBRIDGE_VERSION
@@ -13,10 +14,12 @@ RUN npm run typecheck && npm run build && \
 # QnapHomeHub integration smoke are published as matterbridge-tested.
 FROM luligu/matterbridge:${MATTERBRIDGE_VERSION}
 ARG MATTERBRIDGE_VERSION
+ARG HOMEHUB_VERSION
 
 USER root
 ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub \
-    QNAPHOMEHUB_MATTERBRIDGE_VERSION=${MATTERBRIDGE_VERSION}
+    QNAPHOMEHUB_MATTERBRIDGE_VERSION=${MATTERBRIDGE_VERSION} \
+    QNAPHOMEHUB_VERSION=${HOMEHUB_VERSION}
 LABEL org.opencontainers.image.version=${MATTERBRIDGE_VERSION} \
       io.qnaphomehub.component=matterbridge
 COPY --from=plugin-build /app/plugin/package.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/package.json
