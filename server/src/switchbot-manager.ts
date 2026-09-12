@@ -1,6 +1,8 @@
 import type { AppConfig, DiscoveredDevice } from './types.js';
 import { SerialQueue } from './queue.js';
 
+type DeviceAction = 'press' | 'on' | 'off' | 'status' | 'power' | 'forceOff';
+
 type DebugSink = (
   level: 'info' | 'warn' | 'error',
   source: string,
@@ -87,8 +89,8 @@ export class SwitchBotManager {
     });
   }
 
-  async command(id: string, action: 'press' | 'on' | 'off' | 'status', botPassword?: string): Promise<unknown> {
-    this.emit('info', 'command', 'Device command requested', { id, action });
+  async command(id: string, action: DeviceAction, botPassword?: string, forceHoldSeconds = 10): Promise<unknown> {
+    this.emit('info', 'command', 'Device command requested', { id, action, forceHoldSeconds });
     return this.queue.run(async () => {
       let device: any;
       try {
@@ -111,7 +113,22 @@ export class SwitchBotManager {
         if (typeof device.on === 'function') device.on('error', errorListener);
         try {
           let success = false;
-          if (action === 'press') {
+          let holdSeconds: number | undefined;
+          if (action === 'power') {
+            holdSeconds = 0.5;
+            success = await this.pressWithDuration(device, 0.5);
+          } else if (action === 'forceOff') {
+            holdSeconds = Math.min(30, Math.max(3, Number(forceHoldSeconds) || 10));
+            success = await this.pressWithDuration(device, holdSeconds);
+            // Always put the Bot back into a safe short-press configuration after a forced hold.
+            try { await this.setPressDuration(device, 0.5); }
+            catch (restoreError) {
+              this.emit('warn', 'command', 'Failed to restore short-press duration after force hold', {
+                id,
+                error: this.errorMessage(restoreError),
+              });
+            }
+          } else if (action === 'press') {
             if (typeof device.press !== 'function') throw new Error('Device does not support press');
             success = Boolean(await device.press());
           } else if (action === 'on') {
@@ -129,6 +146,7 @@ export class SwitchBotManager {
             action,
             deviceId: id,
             connectionType: after.activeConnection,
+            ...(holdSeconds !== undefined ? { holdSeconds } : {}),
             ...(error ? { error } : {}),
             device: after,
           };
@@ -151,6 +169,20 @@ export class SwitchBotManager {
 
   async cleanup(): Promise<void> {
     if (this.client?.cleanup) await this.client.cleanup();
+  }
+
+  private async pressWithDuration(device: any, seconds: number): Promise<boolean> {
+    await this.setPressDuration(device, seconds);
+    if (typeof device.press !== 'function') throw new Error('Device does not support press');
+    return Boolean(await device.press());
+  }
+
+  private async setPressDuration(device: any, seconds: number): Promise<void> {
+    if (typeof device.setLongPress !== 'function') throw new Error('Device does not support configurable long press');
+    const deciseconds = Math.min(255, Math.max(1, Math.round(seconds * 10)));
+    const configured = Boolean(await device.setLongPress(deciseconds));
+    if (!configured) throw new Error(`Failed to configure Bot press duration (${deciseconds / 10}s)`);
+    this.emit('info', 'command', 'Bot press duration configured', { seconds: deciseconds / 10, deciseconds });
   }
 
   private async ensureDevice(id: string): Promise<any | undefined> {
