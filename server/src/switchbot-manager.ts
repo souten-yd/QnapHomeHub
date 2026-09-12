@@ -116,13 +116,20 @@ export class SwitchBotManager {
           let holdSeconds: number | undefined;
           if (action === 'power') {
             holdSeconds = 0.5;
-            success = await this.pressWithDuration(device, 0.5);
+            success = await this.pressWithDuration(device, holdSeconds);
           } else if (action === 'forceOff') {
             holdSeconds = Math.min(30, Math.max(3, Number(forceHoldSeconds) || 10));
             success = await this.pressWithDuration(device, holdSeconds);
-            // Always put the Bot back into a safe short-press configuration after a forced hold.
-            try { await this.setPressDuration(device, 0.5); }
-            catch (restoreError) {
+            if (success) {
+              this.emit('warn', 'command', 'PC force-hold is in progress', { id, holdSeconds });
+              await this.delay(Math.round((holdSeconds + 0.75) * 1000));
+            }
+            // Restore a safe short-press setting only after the commanded hold has elapsed.
+            try {
+              await this.ensurePressMode(device);
+              await this.setPressDuration(device, 0.5);
+              this.emit('info', 'command', 'Short-press duration restored after PC force-hold', { id, seconds: 0.5 });
+            } catch (restoreError) {
               this.emit('warn', 'command', 'Failed to restore short-press duration after force hold', {
                 id,
                 error: this.errorMessage(restoreError),
@@ -172,9 +179,18 @@ export class SwitchBotManager {
   }
 
   private async pressWithDuration(device: any, seconds: number): Promise<boolean> {
+    await this.ensurePressMode(device);
     await this.setPressDuration(device, seconds);
     if (typeof device.press !== 'function') throw new Error('Device does not support press');
     return Boolean(await device.press());
+  }
+
+  private async ensurePressMode(device: any): Promise<void> {
+    if (typeof device.setMode !== 'function') throw new Error('Device does not support Press mode configuration');
+    const result = await device.setMode('press');
+    const configured = typeof result === 'boolean' ? result : Boolean(result?.success);
+    if (!configured) throw new Error('Failed to configure Bot in Press mode');
+    this.emit('info', 'command', 'Bot configured in Press mode');
   }
 
   private async setPressDuration(device: any, seconds: number): Promise<void> {
@@ -225,6 +241,10 @@ export class SwitchBotManager {
     }
     try { return JSON.stringify(value); }
     catch { return String(value); }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   private emit(level: 'info' | 'warn' | 'error', source: string, message: string, details?: Record<string, unknown>): void {
