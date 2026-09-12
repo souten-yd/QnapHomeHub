@@ -22,19 +22,30 @@
 
     <div id="app" class="hidden">
       <section class="card updateCard">
-        <div class="sectionHead"><div><div class="sectionLabel">SYSTEM UPDATE</div><h2>GitHub Release 更新</h2><p>最新stable Releaseを確認し、HomeHub / Matterbridgeを安全に更新します。</p></div><span id="updateBadge" class="pill">RELEASE CHECK</span></div>
+        <div class="sectionHead"><div><div class="sectionLabel">SYSTEM UPDATE</div><h2>自動更新</h2><p>GitHub Releaseと、CI検証済みMatterbridge stableを追従します。</p></div><span id="updateBadge" class="pill">RELEASE CHECK</span></div>
         <div class="debugStatusGrid">
-          <div class="miniCard"><span>CURRENT</span><strong id="updateCurrent">-</strong></div>
-          <div class="miniCard"><span>LATEST</span><strong id="updateLatest">-</strong></div>
-          <div class="miniCard"><span>STATUS</span><strong id="updatePhase">待機中</strong></div>
+          <div class="miniCard"><span>HOMEHUB CURRENT</span><strong id="updateCurrent">-</strong></div>
+          <div class="miniCard"><span>HOMEHUB LATEST</span><strong id="updateLatest">-</strong></div>
+          <div class="miniCard"><span>HOMEHUB STATUS</span><strong id="updatePhase">待機中</strong></div>
         </div>
         <div class="actions">
           <button id="checkUpdate" class="secondary">更新を確認</button>
-          <button id="applyUpdate">最新版へ更新</button>
-          <label class="check"><input id="autoUpdateEnabled" type="checkbox" /> stable Releaseを自動更新</label>
+          <button id="applyUpdate">HomeHub最新版へ更新</button>
+          <label class="check"><input id="autoUpdateEnabled" type="checkbox" /> 検証済みstableを自動更新</label>
           <a id="releaseLink" class="button secondary hidden" target="_blank" rel="noreferrer">Release Notes</a>
         </div>
         <p id="updateMessage" class="meta">GitHub Releasesのstable版を確認します。</p>
+
+        <div class="updateSubsection">
+          <div class="sectionHead"><div><div class="sectionLabel">MATTERBRIDGE TRACK</div><h3>Matterbridge検証済み最新版</h3><p>上流stableをGitHub Actionsで毎日テストし、QnapHomeHub連携が通ったイメージだけ配信します。</p></div><span id="matterUpdateBadge" class="pill">CHECK</span></div>
+          <div class="debugStatusGrid">
+            <div class="miniCard"><span>CURRENT</span><strong id="matterUpdateCurrent">-</strong></div>
+            <div class="miniCard"><span>TESTED</span><strong id="matterUpdateTested">-</strong></div>
+            <div class="miniCard"><span>STATUS</span><strong id="matterUpdatePhase">待機中</strong></div>
+          </div>
+          <div class="actions"><button id="applyMatterUpdate" class="secondary">Matterbridge検証済み最新版へ更新</button></div>
+          <p id="matterUpdateMessage" class="meta">CI検証済みイメージを確認します。</p>
+        </div>
       </section>
 
       <section class="card hero accentCard"><div><div class="sectionLabel">BLE GATEWAY</div><h2>1. Bluetooth</h2><p>USBドングルからSwitchBotを探します。</p></div><button id="scan">Bluetoothをスキャン</button></section>
