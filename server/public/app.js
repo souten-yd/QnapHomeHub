@@ -103,6 +103,13 @@ function renderDiscovered(devices) {
     node.querySelector('h3').textContent = device.name || device.deviceType;
     node.querySelector('.meta').textContent = `${device.deviceType} · ${device.mac || device.id} · RSSI ${device.rssi ?? '-'}`;
     node.querySelector('.name').value = device.name || 'SwitchBot';
+    const mode = node.querySelector('.mode');
+    const controlProfile = node.querySelector('.controlProfile');
+    controlProfile.onchange = () => {
+      const pcPower = controlProfile.value === 'pc-power';
+      if (pcPower) mode.value = 'press';
+      mode.disabled = pcPower;
+    };
     node.querySelector('.add').onclick = async event => {
       const article = event.target.closest('article');
       try {
@@ -112,6 +119,8 @@ function renderDiscovered(devices) {
             id: device.id,
             name: article.querySelector('.name').value,
             mode: article.querySelector('.mode').value,
+            controlProfile: article.querySelector('.controlProfile').value,
+            forceHoldSeconds: 10,
             matterType: 'outlet',
             exposeMatter: true,
           }),
@@ -132,6 +141,36 @@ function setCommandFeedback(article, state, text) {
   feedback.textContent = text;
 }
 
+function configureDeviceControls(article, device) {
+  const profile = device.controlProfile || 'standard';
+  const pcPower = profile === 'pc-power';
+  const pressMode = device.mode === 'press';
+  const press = article.querySelector('[data-action="press"]');
+  const power = article.querySelector('[data-action="power"]');
+  const forceOff = article.querySelector('[data-action="forceOff"]');
+  const on = article.querySelector('[data-action="on"]');
+  const off = article.querySelector('[data-action="off"]');
+
+  press.classList.toggle('hidden', pcPower || !pressMode);
+  power.classList.toggle('hidden', !pcPower);
+  forceOff.classList.toggle('hidden', !pcPower);
+  on.classList.toggle('hidden', pcPower || pressMode);
+  off.classList.toggle('hidden', pcPower || pressMode);
+  forceOff.textContent = `強制終了（${device.forceHoldSeconds ?? 10}秒）`;
+}
+
+function syncProfileSettings(article) {
+  const profile = article.querySelector('.editControlProfile');
+  const mode = article.querySelector('.editMode');
+  const holdField = article.querySelector('.forceHoldField');
+  const note = article.querySelector('.pcPowerNote');
+  const pcPower = profile.value === 'pc-power';
+  if (pcPower) mode.value = 'press';
+  mode.disabled = pcPower;
+  holdField.classList.toggle('hidden', !pcPower);
+  note.classList.toggle('hidden', !pcPower);
+}
+
 async function renderRegistered() {
   const { devices } = await api('/api/devices');
   const root = $('#registered');
@@ -145,22 +184,36 @@ async function renderRegistered() {
   for (const device of devices) {
     const node = $('#registeredTpl').content.cloneNode(true);
     const article = node.querySelector('article');
+    const profile = device.controlProfile || 'standard';
     article.querySelector('h3').textContent = device.name;
-    article.querySelector('.meta').textContent = `${device.mode} · ${device.mac || device.id} · Matter: ${device.matterType}`;
+    article.querySelector('.meta').textContent = `${device.mode} · ${profile === 'pc-power' ? `PC電源 · 強制${device.forceHoldSeconds ?? 10}秒` : '標準'} · ${device.mac || device.id} · Matter: ${device.matterType}`;
     article.querySelector('.matter').textContent = device.exposeMatter ? 'Matter ON' : 'Matter OFF';
+
+    configureDeviceControls(article, device);
 
     const editName = article.querySelector('.editName');
     const editMode = article.querySelector('.editMode');
+    const editControlProfile = article.querySelector('.editControlProfile');
+    const editForceHoldSeconds = article.querySelector('.editForceHoldSeconds');
     const editMatterType = article.querySelector('.editMatterType');
     editName.value = device.name;
     editMode.value = device.mode;
+    editControlProfile.value = profile;
+    editForceHoldSeconds.value = device.forceHoldSeconds ?? 10;
     editMatterType.value = device.matterType;
+    editControlProfile.onchange = () => syncProfileSettings(article);
+    syncProfileSettings(article);
 
     article.querySelectorAll('[data-action]').forEach(button => {
       button.onclick = async () => {
         const result = article.querySelector('.result');
         const action = button.dataset.action;
         const oldText = button.textContent;
+        if (action === 'forceOff') {
+          const holdSeconds = Number(editForceHoldSeconds.value || device.forceHoldSeconds || 10);
+          const confirmed = confirm(`${device.name} のPC電源ボタンを約${holdSeconds}秒間長押しします。\n\nOSを介さない強制終了になります。実行しますか？`);
+          if (!confirmed) return;
+        }
         button.disabled = true;
         button.textContent = '送信中…';
         setCommandFeedback(article, 'pending', `${oldText} をHomeHubへ送信中…`);
@@ -172,7 +225,8 @@ async function renderRegistered() {
             setCommandFeedback(article, 'failure', `失敗: ${data.error || 'SwitchBotがsuccess=falseを返しました'}`);
           } else {
             const connection = data?.connectionType ? ` · ${data.connectionType.toUpperCase()}` : '';
-            setCommandFeedback(article, 'success', `${oldText} 完了${connection}`);
+            const hold = data?.holdSeconds ? ` · ${data.holdSeconds}秒` : '';
+            setCommandFeedback(article, 'success', `${oldText} 完了${connection}${hold}`);
           }
           result.textContent = JSON.stringify(data, null, 2);
           result.classList.remove('hidden');
@@ -204,6 +258,8 @@ async function renderRegistered() {
           body: JSON.stringify({
             name: editName.value,
             mode: editMode.value,
+            controlProfile: editControlProfile.value,
+            forceHoldSeconds: Number(editForceHoldSeconds.value),
             matterType: editMatterType.value,
           }),
         });
@@ -307,7 +363,7 @@ async function refreshDebug(showError = true) {
     const data = await api('/api/debug/status?limit=160');
     const matter = data.matterbridge || {};
     const http = matter.http || {};
-    $('#debugHomehub').textContent = `ONLINE · ${data.homehub.registeredCount} registered`;
+    $('#debugHomehub').textContent = `ONLINE · ${data.homehub.version || '-'} · ${data.homehub.registeredCount} registered`;
     $('#debugBle').textContent = `hci${data.homehub.hciDeviceId} · ${data.homehub.discoveredCount} discovered`;
     $('#debugMatter').textContent = `${http.reachable ? 'HTTP OK' : 'HTTP NG'} · ${matter.state || 'not-seen'} · ${matter.deviceCount ?? 0} devices`;
     const matterOk = http.reachable && matter.state === 'ready';

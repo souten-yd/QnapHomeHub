@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { AppConfig } from './types.js';
+import type { AppConfig, RegisteredDevice } from './types.js';
 
 const DEFAULT_CONFIG: AppConfig = {
   hciDeviceId: 0,
@@ -9,6 +9,17 @@ const DEFAULT_CONFIG: AppConfig = {
   scanOnStartup: false,
   devices: [],
 };
+
+function normalizeDevice(device: RegisteredDevice): RegisteredDevice {
+  const controlProfile = device.controlProfile === 'pc-power' ? 'pc-power' : 'standard';
+  const requestedHold = Number(device.forceHoldSeconds);
+  const forceHoldSeconds = Math.min(30, Math.max(3, Number.isFinite(requestedHold) ? requestedHold : 10));
+  return {
+    ...device,
+    controlProfile,
+    forceHoldSeconds,
+  };
+}
 
 export class ConfigStore {
   readonly file: string;
@@ -53,7 +64,7 @@ export class ConfigStore {
       scanTimeoutMs: Math.min(60_000, Math.max(3_000, Number(config.scanTimeoutMs) || 10_000)),
       apiFallback: Boolean(config.apiFallback),
       scanOnStartup: Boolean(config.scanOnStartup),
-      devices: Array.isArray(config.devices) ? config.devices : [],
+      devices: Array.isArray(config.devices) ? config.devices.map(normalizeDevice) : [],
     };
   }
 

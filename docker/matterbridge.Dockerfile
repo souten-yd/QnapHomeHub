@@ -1,25 +1,28 @@
+ARG MATTERBRIDGE_VERSION=3.10.8
+
 FROM node:24-bookworm AS plugin-build
+ARG MATTERBRIDGE_VERSION
 WORKDIR /app/plugin
 COPY matterbridge-plugin/package.json matterbridge-plugin/tsconfig.json ./
-RUN npm install --no-audit --no-fund
+RUN npm install --no-audit --no-fund && npm install --no-audit --no-fund --no-save matterbridge@${MATTERBRIDGE_VERSION}
 COPY matterbridge-plugin/src ./src
 RUN npm run typecheck && npm run build && \
     npm pkg delete devDependencies scripts
 
-# Reuse Matterbridge's official, version-pinned Docker runtime. This preserves
-# the upstream frontend, Matter runtime dependency layout and Docker healthcheck.
-FROM luligu/matterbridge:3.10.6
+# The Matterbridge base is selected by CI. Only versions that pass the
+# QnapHomeHub integration smoke are published as matterbridge-tested.
+FROM luligu/matterbridge:${MATTERBRIDGE_VERSION}
+ARG MATTERBRIDGE_VERSION
 
 USER root
-ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub
-# Matterbridge rejects plugins whose runtime package.json lists matterbridge in
-# dependencies/devDependencies. Copy the pruned package.json from the build stage.
+ENV QNAPHOMEHUB_MATTERBRIDGE_PLUGIN=/usr/local/lib/node_modules/matterbridge-qnaphomehub \
+    QNAPHOMEHUB_MATTERBRIDGE_VERSION=${MATTERBRIDGE_VERSION}
+LABEL org.opencontainers.image.version=${MATTERBRIDGE_VERSION} \
+      io.qnaphomehub.component=matterbridge
 COPY --from=plugin-build /app/plugin/package.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/package.json
 COPY matterbridge-plugin/matterbridge-qnaphomehub.config.json ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/
 COPY --from=plugin-build /app/plugin/dist ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/dist
 COPY docker/matterbridge-bootstrap.mjs ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/matterbridge-bootstrap.mjs
-# The plugin must use the exact Matterbridge instance that owns the platform.
-# Link to the official global runtime instead of installing a second copy.
 RUN mkdir -p ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/node_modules && \
     ln -s /usr/local/lib/node_modules/matterbridge ${QNAPHOMEHUB_MATTERBRIDGE_PLUGIN}/node_modules/matterbridge
 

@@ -1,5 +1,6 @@
 export type BotMode = 'press' | 'switch';
 export type MatterType = 'outlet' | 'light';
+export type ControlProfile = 'standard' | 'pc-power';
 
 export interface RegisteredDevice {
   id: string;
@@ -7,6 +8,8 @@ export interface RegisteredDevice {
   deviceType: string;
   mac?: string;
   mode: BotMode;
+  controlProfile?: ControlProfile;
+  forceHoldSeconds?: number;
   exposeMatter: boolean;
   matterType: MatterType;
   createdAt: string;

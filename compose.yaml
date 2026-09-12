@@ -17,6 +17,7 @@ services:
       SWITCHBOT_TOKEN_FILE: /run/secrets/switchbot_token
       SWITCHBOT_SECRET_FILE: /run/secrets/switchbot_secret
       SWITCHBOT_BOT_PASSWORDS_FILE: /run/secrets/switchbot_bot_passwords
+      HOMEHUB_UPDATER_URL: http://127.0.0.1:8788
     volumes:
       - ./data/homehub:/data
     secrets:
@@ -35,6 +36,7 @@ services:
     container_name: qnaphomehub-matterbridge
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 60s
     depends_on:
       - homehub
     environment:
@@ -46,6 +48,34 @@ services:
     secrets:
       - homehub_internal_token
       - homehub_admin_password
+
+  updater:
+    image: ghcr.io/souten-yd/qnaphomehub:updater
+    build:
+      context: .
+      dockerfile: docker/updater.Dockerfile
+    container_name: qnaphomehub-updater
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - homehub
+      - matterbridge
+    environment:
+      UPDATER_BIND: 127.0.0.1
+      UPDATER_PORT: "8788"
+      DATA_DIR: /data
+      PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
+      QNAP_HOMEHUB_PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
+      COMPOSE_PROJECT_NAME: qnaphomehub
+      GITHUB_REPOSITORY: souten-yd/QnapHomeHub
+      GHCR_IMAGE: ghcr.io/souten-yd/qnaphomehub
+      HOMEHUB_INTERNAL_TOKEN_FILE: /run/secrets/homehub_internal_token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}:ro
+      - ./data/updater:/data
+    secrets:
+      - homehub_internal_token
 
 secrets:
   homehub_admin_username:
