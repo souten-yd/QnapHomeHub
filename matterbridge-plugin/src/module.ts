@@ -10,10 +10,21 @@ import {
 import type { AnsiLogger } from 'matterbridge/logger';
 import { OnOff } from 'matterbridge/matter/clusters';
 
-type Device = { id:string; name:string; deviceType:string; mac?:string; mode:'press'|'switch'; exposeMatter:boolean; matterType:'outlet'|'light' };
+type Device = {
+  id:string;
+  name:string;
+  deviceType:string;
+  mac?:string;
+  mode:'press'|'switch';
+  controlProfile?:'standard'|'pc-power';
+  forceHoldSeconds?:number;
+  exposeMatter:boolean;
+  matterType:'outlet'|'light';
+};
 type Config = BasePlatformConfig;
 
 type HomeHubCommandResult = { success?: boolean; error?: string } & Record<string, unknown>;
+type MatterAction = 'press'|'on'|'off'|'power'|'forceOff';
 
 async function readToken(): Promise<string> {
   const file = process.env.HOMEHUB_INTERNAL_TOKEN_FILE;
@@ -22,7 +33,14 @@ async function readToken(): Promise<string> {
 }
 
 function deviceSignature(device: Device): string {
-  return JSON.stringify([device.name, device.deviceType, device.mode, device.matterType]);
+  return JSON.stringify([
+    device.name,
+    device.deviceType,
+    device.mode,
+    device.controlProfile ?? 'standard',
+    device.forceHoldSeconds ?? 10,
+    device.matterType,
+  ]);
 }
 
 export default function initializePlugin(matterbridge: PlatformMatterbridge, log: AnsiLogger, config: Config): QnapHomeHubPlatform {
@@ -97,15 +115,18 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
   }
 
   private async unregisterHomeHubDevice(id: string): Promise<void> {
-    const endpoint = this.getDeviceById(`homehub-${id}`);
-    if (endpoint) {
-      await this.unregisterDevice(endpoint);
-      this.log.info(`Unregistered HomeHub device ${id}`);
+    for (const endpointId of [`homehub-${id}`, `homehub-${id}-forceoff`]) {
+      const endpoint = this.getDeviceById(endpointId);
+      if (endpoint) {
+        await this.unregisterDevice(endpoint);
+        this.log.info(`Unregistered HomeHub Matter endpoint ${endpointId}`);
+      }
     }
     this.registered.delete(id);
   }
 
   private async registerHomeHubDevice(device: Device, signature: string): Promise<void> {
+    const pcPower = device.controlProfile === 'pc-power';
     const endpointType = device.matterType === 'light' ? onOffLight : onOffPlugInUnit;
     const endpoint = new MatterbridgeEndpoint(endpointType, { id: `homehub-${device.id}` })
       .createDefaultBridgedDeviceBasicInformationClusterServer(
@@ -114,26 +135,53 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
         this.matterbridge.aggregatorVendorId,
         'QnapHomeHub',
         device.deviceType || 'SwitchBot',
-        20000,
-        '0.2.0',
+        20100,
+        '0.2.1',
       )
       .createDefaultPowerSourceWiredClusterServer()
       .addRequiredClusters();
 
     endpoint.addCommandHandler('on', () => {
-      void this.action(device, device.mode === 'press' ? 'press' : 'on', endpoint);
+      const action: MatterAction = pcPower ? 'power' : device.mode === 'press' ? 'press' : 'on';
+      void this.action(device, action, endpoint);
     });
     endpoint.addCommandHandler('off', () => {
-      if (device.mode === 'switch') void this.action(device, 'off', endpoint);
+      if (!pcPower && device.mode === 'switch') void this.action(device, 'off', endpoint);
       else void endpoint.setAttribute(OnOff, 'onOff', false, this.log);
     });
 
     await this.registerDevice(endpoint);
+    this.log.info(`Registered ${device.name} (${device.id}) as ${device.matterType}${pcPower ? ' / PC power' : ''}`);
+
+    if (pcPower) {
+      const forceEndpoint = new MatterbridgeEndpoint(onOffPlugInUnit, { id: `homehub-${device.id}-forceoff` })
+        .createDefaultBridgedDeviceBasicInformationClusterServer(
+          `${device.name} 強制終了`,
+          `${device.id}-forceoff`,
+          this.matterbridge.aggregatorVendorId,
+          'QnapHomeHub',
+          'PC Force Shutdown',
+          20101,
+          '0.2.1',
+        )
+        .createDefaultPowerSourceWiredClusterServer()
+        .addRequiredClusters();
+
+      forceEndpoint.addCommandHandler('on', () => {
+        void this.action(device, 'forceOff', forceEndpoint);
+      });
+      forceEndpoint.addCommandHandler('off', () => {
+        void forceEndpoint.setAttribute(OnOff, 'onOff', false, this.log);
+      });
+
+      await this.registerDevice(forceEndpoint);
+      this.log.warn(`Registered ${device.name} forced shutdown as a separate Matter outlet`);
+    }
+
     this.registered.set(device.id, signature);
-    this.log.info(`Registered ${device.name} (${device.id}) as ${device.matterType}`);
   }
 
-  private async action(device: Device, action: 'press'|'on'|'off', endpoint: MatterbridgeEndpoint): Promise<void> {
+  private async action(device: Device, action: MatterAction, endpoint: MatterbridgeEndpoint): Promise<void> {
     try {
       const response = await fetch(`${this.baseUrl}/api/internal/devices/${encodeURIComponent(device.id)}/${action}`, {
         method: 'POST',
@@ -147,14 +195,14 @@ export class QnapHomeHubPlatform extends MatterbridgeDynamicPlatform {
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}: ${payload.error ?? text}`);
       if (payload.success === false) throw new Error(payload.error || 'HomeHub returned success=false');
-      if (device.mode === 'press') {
+      if (['press', 'power', 'forceOff'].includes(action)) {
         await new Promise(resolve => setTimeout(resolve, 250));
         await endpoint.setAttribute(OnOff, 'onOff', false, this.log);
       }
     } catch (error) {
       this.log.error(`Command ${action} failed for ${device.name}: ${String(error)}`);
       await this.reportStatus('command-error', this.registered.size, `${device.name}: ${String(error)}`).catch(() => undefined);
-      if (device.mode === 'press') await endpoint.setAttribute(OnOff, 'onOff', false, this.log);
+      if (['press', 'power', 'forceOff'].includes(action)) await endpoint.setAttribute(OnOff, 'onOff', false, this.log);
     }
   }
 
