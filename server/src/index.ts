@@ -13,6 +13,8 @@ import type { RegisteredDevice } from './types.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = process.env.DATA_DIR ?? '/data';
 const port = Number(process.env.PORT ?? '8787');
+const appVersion = process.env.HOMEHUB_VERSION ?? '0.1.0';
+const updaterUrl = process.env.HOMEHUB_UPDATER_URL ?? 'http://127.0.0.1:8788';
 const store = new ConfigStore(dataDir);
 const debug = new DebugEventStore();
 await store.load();
@@ -72,6 +74,30 @@ async function matterbridgeHealth(): Promise<Record<string, unknown>> {
   }
 }
 
+async function updaterRequest(endpoint: string, init: RequestInit = {}): Promise<unknown> {
+  if (!internalToken) throw new Error('Internal token is not configured');
+  const response = await fetch(`${updaterUrl}${endpoint}`, {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      'x-homehub-internal-token': internalToken,
+      ...(init.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(endpoint === '/status' ? 2500 : 15000),
+  });
+  const text = await response.text();
+  let body: unknown = {};
+  if (text) {
+    try { body = JSON.parse(text); }
+    catch { body = { error: text }; }
+  }
+  if (!response.ok) {
+    const message = typeof body === 'object' && body && 'error' in body ? String((body as { error?: unknown }).error) : `Updater HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  return body;
+}
+
 async function runDeviceCommand(
   id: string,
   action: 'press' | 'on' | 'off' | 'status',
@@ -96,7 +122,7 @@ async function runDeviceCommand(
 app.disable('x-powered-by');
 app.use(express.json({ limit: '128kb' }));
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', authRequired: auth.required, version: '0.1.0' }));
+app.get('/api/health', (_req, res) => res.json({ status: 'ok', authRequired: auth.required, version: appVersion }));
 app.post('/api/auth/login', (req, res) => auth.login(req, res));
 app.post('/api/auth/logout', (req, res) => auth.logout(req, res));
 
@@ -136,6 +162,40 @@ app.post('/api/internal/devices/:id/:action', internalAuth, async (req, res) => 
 });
 
 app.use('/api', auth.middleware);
+
+app.get('/api/update/status', async (_req, res) => {
+  try { res.json(await updaterRequest('/status')); }
+  catch (error) { res.status(503).json({ error: (error as Error).message, available: false }); }
+});
+app.post('/api/update/check', async (_req, res) => {
+  try {
+    debug.add('info', 'updater', 'GitHub Release check requested from Web UI');
+    res.json(await updaterRequest('/check', { method: 'POST', body: '{}' }));
+  } catch (error) {
+    debug.add('error', 'updater', 'GitHub Release check failed', { error: (error as Error).message });
+    res.status(503).json({ error: (error as Error).message });
+  }
+});
+app.patch('/api/update/config', async (req, res) => {
+  try {
+    const body = JSON.stringify({ autoUpdate: Boolean(req.body?.autoUpdate) });
+    const result = await updaterRequest('/config', { method: 'PATCH', body });
+    debug.add('info', 'updater', 'Automatic update setting changed', { autoUpdate: Boolean(req.body?.autoUpdate) });
+    res.json(result);
+  } catch (error) { res.status(503).json({ error: (error as Error).message }); }
+});
+app.post('/api/update/apply', async (req, res) => {
+  try {
+    const body = JSON.stringify({ tag: req.body?.tag });
+    const result = await updaterRequest('/apply', { method: 'POST', body });
+    debug.add('warn', 'updater', 'Release update accepted; HomeHub may restart', { tag: req.body?.tag });
+    res.status(202).json(result);
+  } catch (error) {
+    debug.add('error', 'updater', 'Release update request failed', { error: (error as Error).message });
+    res.status(503).json({ error: (error as Error).message });
+  }
+});
+
 app.get('/api/config', (_req, res) => {
   const config = store.get();
   res.json({ ...config, credentials: { switchbotApi: Boolean(switchbotToken && switchbotSecret), internalToken: Boolean(internalToken) } });
@@ -221,6 +281,7 @@ app.get('/api/debug/status', async (req, res) => {
   res.json({
     now: new Date().toISOString(),
     homehub: {
+      version: appVersion,
       hciDeviceId: store.get().hciDeviceId,
       discoveredCount: switchbot.listDiscovered().length,
       registeredCount: store.get().devices.length,
@@ -250,8 +311,8 @@ app.use(express.static(publicDir));
 app.use((_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`QnapHomeHub listening on http://0.0.0.0:${port}`);
-  debug.add('info', 'system', 'QnapHomeHub HTTP server is ready', { port, hciDeviceId: store.get().hciDeviceId });
+  console.log(`QnapHomeHub ${appVersion} listening on http://0.0.0.0:${port}`);
+  debug.add('info', 'system', 'QnapHomeHub HTTP server is ready', { port, version: appVersion, hciDeviceId: store.get().hciDeviceId });
 });
 if (store.get().scanOnStartup) switchbot.scan().catch(error => debug.add('error', 'ble.scan', 'Startup scan failed', { error: (error as Error).message }));
 
