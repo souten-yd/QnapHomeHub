@@ -43,20 +43,13 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Testing Matterbridge $VERSION"
 
-      - name: Prefer latest QnapHomeHub stable source
+      - name: Resolve current QnapHomeHub version
         id: homehub
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          STABLE_TAG="$(gh release view --json tagName --jq '.tagName' 2>/dev/null || true)"
-          if [[ -n "$STABLE_TAG" ]]; then
-            git checkout "$STABLE_TAG"
-            echo "source=$STABLE_TAG" >> "$GITHUB_OUTPUT"
-          else
-            echo "No QnapHomeHub release exists yet; testing current main source"
-            echo "source=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          fi
+          VERSION="$(node -p 'require("./server/package.json").version')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing current main source ${GITHUB_SHA} as QnapHomeHub $VERSION"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -69,6 +62,8 @@ jobs:
           load: true
           tags: qnaphomehub-server:upstream-test
           platforms: linux/amd64
+          build-args: |
+            HOMEHUB_VERSION=${{ steps.homehub.outputs.version }}
 
       - name: Build latest Matterbridge candidate
         uses: docker/build-push-action@v6
@@ -81,6 +76,7 @@ jobs:
           platforms: linux/amd64
           build-args: |
             MATTERBRIDGE_VERSION=${{ steps.upstream.outputs.version }}
+            HOMEHUB_VERSION=${{ steps.homehub.outputs.version }}
 
       - name: Integration smoke with HomeHub plugin heartbeat
         shell: bash
