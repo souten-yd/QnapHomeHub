@@ -14,6 +14,7 @@ jobs:
         with:
           node-version: 24
       - run: node --check server/public/app.js
+      - run: node --check server/public/control.js
       - run: node --check server/public/update.js
       - run: node --check updater/app.mjs
       - run: node --check docker/matterbridge-bootstrap.mjs
@@ -87,6 +88,12 @@ jobs:
           done
           docker logs homehub-ci
           exit 1
+      - name: Verify default control page and management page
+        run: |
+          curl -fsS http://127.0.0.1:8787/ | grep -q 'DEVICE CONTROL'
+          curl -fsS http://127.0.0.1:8787/ | grep -q '/control.js'
+          curl -fsS http://127.0.0.1:8787/manage.html | grep -q 'SYSTEM UPDATE'
+          curl -fsS http://127.0.0.1:8787/manage.html | grep -q '/app.js'
       - uses: docker/build-push-action@v6
         with:
           context: .
