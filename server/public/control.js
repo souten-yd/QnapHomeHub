@@ -29,6 +29,8 @@ const showApp = () => {
   $('#controlApp').classList.remove('hidden');
 };
 
+let activeActions = 0;
+
 function setTheme(theme) {
   const selected = theme === 'cyber' ? 'cyber' : 'black';
   document.documentElement.dataset.theme = selected;
@@ -72,6 +74,7 @@ async function executeAction(card, device, action, button) {
   }
 
   const label = actionLabel(action);
+  activeActions += 1;
   button.disabled = true;
   const original = button.textContent;
   button.textContent = '実行中…';
@@ -88,6 +91,7 @@ async function executeAction(card, device, action, button) {
   } catch (error) {
     setFeedback(card, 'failure', `失敗: ${error.message}`);
   } finally {
+    activeActions = Math.max(0, activeActions - 1);
     button.disabled = false;
     button.textContent = original;
   }
@@ -150,6 +154,7 @@ function renderDevices(devices) {
 }
 
 async function refreshDevices() {
+  if (activeActions > 0) return;
   const refresh = $('#refreshControls');
   refresh.disabled = true;
   try {
@@ -194,7 +199,7 @@ $('#loginForm').addEventListener('submit', async event => {
 
 $('#refreshControls').onclick = refreshDevices;
 setInterval(() => {
-  if (!$('#controlApp').classList.contains('hidden')) void refreshDevices();
+  if (!$('#controlApp').classList.contains('hidden') && activeActions === 0) void refreshDevices();
 }, 30000);
 
 boot().catch(error => {
