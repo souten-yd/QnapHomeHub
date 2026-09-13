@@ -19,7 +19,8 @@ function createHarness(mode: 'press' | 'switch' | null = 'press') {
     debug,
   ) as any;
 
-  const sendCommand = vi.fn().mockResolvedValue(Buffer.from([0x01]));
+  // Real Bot firmware can complete configuration writes without a payload response.
+  const sendCommand = vi.fn().mockResolvedValue(undefined);
   const press = vi.fn().mockResolvedValue(true);
   const device = {
     bleConnection: { sendCommand },
@@ -56,12 +57,12 @@ describe('SwitchBotManager PC power BLE commands', () => {
     expect(sendCommand).toHaveBeenCalledWith(
       'ed:2e:c6:06:41:8f',
       Buffer.from([0x57, 0x0f, 0x08, 0x00]),
-      expect.objectContaining({ expectResponse: true, validateResponse: true }),
+      expect.objectContaining({ expectResponse: false, validateResponse: false }),
     );
     expect(press).toHaveBeenCalledTimes(1);
   });
 
-  it('encodes force-hold duration as whole seconds, not deciseconds', async () => {
+  it('encodes force-hold duration as whole seconds and accepts an empty config response', async () => {
     const { manager, device, sendCommand } = createHarness('press');
 
     await manager.setPressDuration(device, 10, 'BOT1');
@@ -69,7 +70,7 @@ describe('SwitchBotManager PC power BLE commands', () => {
     expect(sendCommand).toHaveBeenCalledWith(
       'ed:2e:c6:06:41:8f',
       Buffer.from([0x57, 0x0f, 0x08, 0x0a]),
-      expect.objectContaining({ expectResponse: true, validateResponse: true }),
+      expect.objectContaining({ expectResponse: false, validateResponse: false }),
     );
   });
 
