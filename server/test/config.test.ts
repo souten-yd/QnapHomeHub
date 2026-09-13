@@ -34,5 +34,8 @@ describe('ConfigStore', () => {
     const pcPower = await store.update({ devices: [{ ...baseDevice, controlProfile: 'pc-power', forceHoldSeconds: 99 }] });
     expect(pcPower.devices[0]?.controlProfile).toBe('pc-power');
     expect(pcPower.devices[0]?.forceHoldSeconds).toBe(30);
+
+    const fractional = await store.update({ devices: [{ ...baseDevice, controlProfile: 'pc-power', forceHoldSeconds: 9.6 }] });
+    expect(fractional.devices[0]?.forceHoldSeconds).toBe(10);
   });
 });
