@@ -17,7 +17,6 @@ export class SwitchBotManager {
   private initialized = false;
   private discovered = new Map<string, any>();
   private readonly queue = new SerialQueue();
-  private readonly pressModeConfirmed = new Set<string>();
 
   constructor(
     private readonly getConfig: () => AppConfig,
@@ -181,30 +180,23 @@ export class SwitchBotManager {
   }
 
   private async pressWithDuration(device: any, seconds: number, id: string): Promise<boolean> {
-    await this.ensurePressMode(device, id);
+    this.assertPressMode(device, id);
     await this.setPressDuration(device, seconds, id);
     if (typeof device.press !== 'function') throw new Error('Device does not support press');
     return Boolean(await device.press());
   }
 
-  private async ensurePressMode(device: any, id: string): Promise<void> {
-    if (this.pressModeConfirmed.has(id)) return;
-
-    try {
-      // node-switchbot 4.0.3 uses an incompatible Bot SET_MODE frame. Use the
-      // SwitchBot BLE specification directly: 0x57 0x03 0x64 <act-mode>.
-      await this.sendBotBleConfig(device, [0x57, 0x03, 0x64, 0x00]);
-      this.pressModeConfirmed.add(id);
-      this.emit('info', 'command', 'Bot configured in Press mode', { id, protocol: '57036400' });
-    } catch (error) {
-      // PC-power devices are explicitly configured as Press mode in HomeHub.
-      // A failed mode write must not block a normal press on Bots that are
-      // already in Press mode; duration/action commands can still succeed.
-      this.emit('warn', 'command', 'Could not confirm Bot Press mode; continuing with press command', {
-        id,
-        error: this.errorMessage(error),
-      });
+  private assertPressMode(device: any, id: string): void {
+    const info = typeof device?.getInfo === 'function' ? device.getInfo() : {};
+    const advertisedMode = info?.bleServiceData?.mode;
+    if (advertisedMode === 'switch') {
+      throw new Error('Bot is in Switch mode. Change it to Press mode in the SwitchBot app, then scan again.');
     }
+    if (advertisedMode === 'press') {
+      this.emit('info', 'command', 'Bot advertisement confirms Press mode', { id });
+      return;
+    }
+    this.emit('warn', 'command', 'Bot Press mode could not be confirmed from advertisement; continuing without rewriting mode', { id });
   }
 
   private async setPressDuration(device: any, seconds: number, id: string): Promise<void> {
@@ -213,7 +205,9 @@ export class SwitchBotManager {
     const normalizedSeconds = seconds <= 0 ? 0 : Math.min(255, Math.max(1, Math.round(seconds)));
 
     // node-switchbot 4.0.3 currently emits 57 0f 47 03 <value>, while the
-    // Bot BLE specification requires 57 0f 08 <seconds>.
+    // Bot BLE specification requires 57 0f 08 <seconds>. Send the official
+    // frame through its BLE transport and keep node-switchbot for discovery
+    // and the actual press command.
     await this.sendBotBleConfig(device, [0x57, 0x0f, 0x08, normalizedSeconds]);
     this.emit('info', 'command', 'Bot press duration configured', {
       id,
