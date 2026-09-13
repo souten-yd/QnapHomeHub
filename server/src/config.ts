@@ -13,7 +13,7 @@ const DEFAULT_CONFIG: AppConfig = {
 function normalizeDevice(device: RegisteredDevice): RegisteredDevice {
   const controlProfile = device.controlProfile === 'pc-power' ? 'pc-power' : 'standard';
   const requestedHold = Number(device.forceHoldSeconds);
-  const forceHoldSeconds = Math.min(30, Math.max(3, Number.isFinite(requestedHold) ? requestedHold : 10));
+  const forceHoldSeconds = Math.min(30, Math.max(3, Math.round(Number.isFinite(requestedHold) ? requestedHold : 10)));
   return {
     ...device,
     controlProfile,
