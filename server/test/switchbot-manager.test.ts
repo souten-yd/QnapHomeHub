@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { SwitchBotManager } from '../src/switchbot-manager.js';
 
-function createHarness(mode: 'press' | 'switch' | undefined = 'press') {
+function createHarness(mode: 'press' | 'switch' | null = 'press') {
   const debug = vi.fn();
   const manager = new SwitchBotManager(
     () => ({
@@ -29,7 +29,7 @@ function createHarness(mode: 'press' | 'switch' | undefined = 'press') {
       deviceType: 'Bot',
       connectionTypes: ['ble'],
       activeConnection: 'ble',
-      ...(mode ? { bleServiceData: { mode } } : {}),
+      ...(mode !== null ? { bleServiceData: { mode } } : {}),
     }),
     hasBLE: () => true,
     hasAPI: () => false,
@@ -84,7 +84,7 @@ describe('SwitchBotManager PC power BLE commands', () => {
   });
 
   it('continues safely when advertisement does not expose the current Bot mode', async () => {
-    const { manager, sendCommand, press, debug } = createHarness(undefined);
+    const { manager, sendCommand, press, debug } = createHarness(null);
 
     const result = await manager.command('BOT1', 'power');
 
