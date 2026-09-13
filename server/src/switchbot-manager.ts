@@ -1,3 +1,5 @@
+import { Buffer } from 'node:buffer';
+
 import type { AppConfig, DiscoveredDevice } from './types.js';
 import { SerialQueue } from './queue.js';
 
@@ -15,6 +17,7 @@ export class SwitchBotManager {
   private initialized = false;
   private discovered = new Map<string, any>();
   private readonly queue = new SerialQueue();
+  private readonly pressModeConfirmed = new Set<string>();
 
   constructor(
     private readonly getConfig: () => AppConfig,
@@ -115,20 +118,19 @@ export class SwitchBotManager {
           let success = false;
           let holdSeconds: number | undefined;
           if (action === 'power') {
-            holdSeconds = 0.5;
-            success = await this.pressWithDuration(device, holdSeconds);
+            holdSeconds = 0;
+            success = await this.pressWithDuration(device, holdSeconds, id);
           } else if (action === 'forceOff') {
-            holdSeconds = Math.min(30, Math.max(3, Number(forceHoldSeconds) || 10));
-            success = await this.pressWithDuration(device, holdSeconds);
+            holdSeconds = this.normalizeLongPressSeconds(forceHoldSeconds);
+            success = await this.pressWithDuration(device, holdSeconds, id);
             if (success) {
               this.emit('warn', 'command', 'PC force-hold is in progress', { id, holdSeconds });
               await this.delay(Math.round((holdSeconds + 0.75) * 1000));
             }
-            // Restore a safe short-press setting only after the commanded hold has elapsed.
+            // Restore the Bot to an immediate short press after the commanded hold has elapsed.
             try {
-              await this.ensurePressMode(device);
-              await this.setPressDuration(device, 0.5);
-              this.emit('info', 'command', 'Short-press duration restored after PC force-hold', { id, seconds: 0.5 });
+              await this.setPressDuration(device, 0, id);
+              this.emit('info', 'command', 'Short-press duration restored after PC force-hold', { id, seconds: 0 });
             } catch (restoreError) {
               this.emit('warn', 'command', 'Failed to restore short-press duration after force hold', {
                 id,
@@ -178,27 +180,70 @@ export class SwitchBotManager {
     if (this.client?.cleanup) await this.client.cleanup();
   }
 
-  private async pressWithDuration(device: any, seconds: number): Promise<boolean> {
-    await this.ensurePressMode(device);
-    await this.setPressDuration(device, seconds);
+  private async pressWithDuration(device: any, seconds: number, id: string): Promise<boolean> {
+    await this.ensurePressMode(device, id);
+    await this.setPressDuration(device, seconds, id);
     if (typeof device.press !== 'function') throw new Error('Device does not support press');
     return Boolean(await device.press());
   }
 
-  private async ensurePressMode(device: any): Promise<void> {
-    if (typeof device.setMode !== 'function') throw new Error('Device does not support Press mode configuration');
-    const result = await device.setMode('press');
-    const configured = typeof result === 'boolean' ? result : Boolean(result?.success);
-    if (!configured) throw new Error('Failed to configure Bot in Press mode');
-    this.emit('info', 'command', 'Bot configured in Press mode');
+  private async ensurePressMode(device: any, id: string): Promise<void> {
+    if (this.pressModeConfirmed.has(id)) return;
+
+    try {
+      // node-switchbot 4.0.3 uses an incompatible Bot SET_MODE frame. Use the
+      // SwitchBot BLE specification directly: 0x57 0x03 0x64 <act-mode>.
+      await this.sendBotBleConfig(device, [0x57, 0x03, 0x64, 0x00]);
+      this.pressModeConfirmed.add(id);
+      this.emit('info', 'command', 'Bot configured in Press mode', { id, protocol: '57036400' });
+    } catch (error) {
+      // PC-power devices are explicitly configured as Press mode in HomeHub.
+      // A failed mode write must not block a normal press on Bots that are
+      // already in Press mode; duration/action commands can still succeed.
+      this.emit('warn', 'command', 'Could not confirm Bot Press mode; continuing with press command', {
+        id,
+        error: this.errorMessage(error),
+      });
+    }
   }
 
-  private async setPressDuration(device: any, seconds: number): Promise<void> {
-    if (typeof device.setLongPress !== 'function') throw new Error('Device does not support configurable long press');
-    const deciseconds = Math.min(255, Math.max(1, Math.round(seconds * 10)));
-    const configured = Boolean(await device.setLongPress(deciseconds));
-    if (!configured) throw new Error(`Failed to configure Bot press duration (${deciseconds / 10}s)`);
-    this.emit('info', 'command', 'Bot press duration configured', { seconds: deciseconds / 10, deciseconds });
+  private async setPressDuration(device: any, seconds: number, id: string): Promise<void> {
+    // The official Bot BLE protocol encodes long-press time in whole seconds.
+    // 0 means an immediate/normal short press; 1..255 are long-press seconds.
+    const normalizedSeconds = seconds <= 0 ? 0 : Math.min(255, Math.max(1, Math.round(seconds)));
+
+    // node-switchbot 4.0.3 currently emits 57 0f 47 03 <value>, while the
+    // Bot BLE specification requires 57 0f 08 <seconds>.
+    await this.sendBotBleConfig(device, [0x57, 0x0f, 0x08, normalizedSeconds]);
+    this.emit('info', 'command', 'Bot press duration configured', {
+      id,
+      seconds: normalizedSeconds,
+      protocol: `570f08${normalizedSeconds.toString(16).padStart(2, '0')}`,
+    });
+  }
+
+  private normalizeLongPressSeconds(value: number): number {
+    return Math.min(30, Math.max(3, Math.round(Number(value) || 10)));
+  }
+
+  private async sendBotBleConfig(device: any, bytes: number[]): Promise<void> {
+    if (typeof device?.hasBLE === 'function' && !device.hasBLE()) {
+      throw new Error('BLE is not available for Bot configuration');
+    }
+
+    const info = typeof device?.getInfo === 'function' ? device.getInfo() : {};
+    const mac = info?.mac || (info?.bleId ? `id:${info.bleId}` : undefined);
+    const connection = device?.bleConnection;
+    if (!mac) throw new Error('Bot BLE address is unavailable');
+    if (!connection || typeof connection.sendCommand !== 'function') {
+      throw new Error('Bot BLE command channel is unavailable');
+    }
+
+    await connection.sendCommand(mac, Buffer.from(bytes), {
+      expectResponse: true,
+      validateResponse: true,
+      responseTimeoutMs: 1500,
+    });
   }
 
   private async ensureDevice(id: string): Promise<any | undefined> {
