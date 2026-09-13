@@ -1,8 +1,10 @@
+import { Buffer } from 'node:buffer';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { SwitchBotManager } from '../src/switchbot-manager.js';
 
-function createHarness() {
+function createHarness(mode: 'press' | 'switch' | undefined = 'press') {
   const debug = vi.fn();
   const manager = new SwitchBotManager(
     () => ({
@@ -27,6 +29,7 @@ function createHarness() {
       deviceType: 'Bot',
       connectionTypes: ['ble'],
       activeConnection: 'ble',
+      ...(mode ? { bleServiceData: { mode } } : {}),
     }),
     hasBLE: () => true,
     hasAPI: () => false,
@@ -43,20 +46,14 @@ function createHarness() {
 }
 
 describe('SwitchBotManager PC power BLE commands', () => {
-  it('uses the official Bot mode and short-press frames without calling node-switchbot setters', async () => {
-    const { manager, sendCommand, press } = createHarness();
+  it('uses the official short-press duration frame without rewriting Bot mode', async () => {
+    const { manager, sendCommand, press } = createHarness('press');
 
     const result = await manager.command('BOT1', 'power');
 
     expect(result).toMatchObject({ success: true, action: 'power', holdSeconds: 0 });
-    expect(sendCommand).toHaveBeenNthCalledWith(
-      1,
-      'ed:2e:c6:06:41:8f',
-      Buffer.from([0x57, 0x03, 0x64, 0x00]),
-      expect.objectContaining({ expectResponse: true, validateResponse: true }),
-    );
-    expect(sendCommand).toHaveBeenNthCalledWith(
-      2,
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    expect(sendCommand).toHaveBeenCalledWith(
       'ed:2e:c6:06:41:8f',
       Buffer.from([0x57, 0x0f, 0x08, 0x00]),
       expect.objectContaining({ expectResponse: true, validateResponse: true }),
@@ -65,7 +62,7 @@ describe('SwitchBotManager PC power BLE commands', () => {
   });
 
   it('encodes force-hold duration as whole seconds, not deciseconds', async () => {
-    const { manager, device, sendCommand } = createHarness();
+    const { manager, device, sendCommand } = createHarness('press');
 
     await manager.setPressDuration(device, 10, 'BOT1');
 
@@ -76,15 +73,29 @@ describe('SwitchBotManager PC power BLE commands', () => {
     );
   });
 
-  it('does not block a press when Press-mode confirmation itself fails', async () => {
-    const { manager, sendCommand, press } = createHarness();
-    sendCommand
-      .mockRejectedValueOnce(new Error('mode write rejected'))
-      .mockResolvedValueOnce(Buffer.from([0x01]));
+  it('rejects PC power commands when BLE advertisement explicitly reports Switch mode', async () => {
+    const { manager, sendCommand, press } = createHarness('switch');
+
+    await expect(manager.command('BOT1', 'power')).rejects.toThrow(
+      'Bot is in Switch mode. Change it to Press mode in the SwitchBot app, then scan again.',
+    );
+    expect(sendCommand).not.toHaveBeenCalled();
+    expect(press).not.toHaveBeenCalled();
+  });
+
+  it('continues safely when advertisement does not expose the current Bot mode', async () => {
+    const { manager, sendCommand, press, debug } = createHarness(undefined);
 
     const result = await manager.command('BOT1', 'power');
 
     expect(result).toMatchObject({ success: true, action: 'power' });
+    expect(sendCommand).toHaveBeenCalledTimes(1);
     expect(press).toHaveBeenCalledTimes(1);
+    expect(debug).toHaveBeenCalledWith(
+      'warn',
+      'command',
+      'Bot Press mode could not be confirmed from advertisement; continuing without rewriting mode',
+      { id: 'BOT1' },
+    );
   });
 });
