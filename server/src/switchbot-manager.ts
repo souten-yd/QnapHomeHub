@@ -233,10 +233,12 @@ export class SwitchBotManager {
       throw new Error('Bot BLE command channel is unavailable');
     }
 
+    // Bot configuration writes are write-only on some Bot/firmware combinations.
+    // node-switchbot 4.0.3 treats an empty response as an error when response
+    // validation is enabled, even though the GATT write itself completed.
     await connection.sendCommand(mac, Buffer.from(bytes), {
-      expectResponse: true,
-      validateResponse: true,
-      responseTimeoutMs: 1500,
+      expectResponse: false,
+      validateResponse: false,
     });
   }
 
