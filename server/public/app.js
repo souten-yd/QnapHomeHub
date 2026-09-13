@@ -30,6 +30,7 @@ const showApp = () => {
 
 let config;
 let debugBusy = false;
+let latestDebugData = null;
 
 function setTheme(theme) {
   const selected = theme === 'cyber' ? 'cyber' : 'black';
@@ -318,6 +319,27 @@ function formatTime(iso) {
   catch { return iso; }
 }
 
+async function copyText(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  textarea.style.pointerEvents = 'none';
+  document.body.append(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+  const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('クリップボードへコピーできませんでした');
+}
+
 function renderDebugEvents(events) {
   const root = $('#debugEvents');
   root.replaceChildren();
@@ -361,6 +383,7 @@ async function refreshDebug(showError = true) {
   debugBusy = true;
   try {
     const data = await api('/api/debug/status?limit=160');
+    latestDebugData = data;
     const matter = data.matterbridge || {};
     const http = matter.http || {};
     $('#debugHomehub').textContent = `ONLINE · ${data.homehub.version || '-'} · ${data.homehub.registeredCount} registered`;
@@ -384,6 +407,21 @@ async function refreshDebug(showError = true) {
 }
 
 $('#refreshDebug').onclick = () => refreshDebug(true);
+$('#copyDebug').onclick = async () => {
+  const button = $('#copyDebug');
+  const originalText = button.textContent;
+  try {
+    if (!latestDebugData) await refreshDebug(true);
+    if (!latestDebugData) throw new Error('デバッグ情報がまだ取得できていません');
+    await copyText(JSON.stringify(latestDebugData, null, 2));
+    button.textContent = 'コピー済み';
+  } catch (error) {
+    button.textContent = 'コピー失敗';
+    alert(error.message);
+  } finally {
+    setTimeout(() => { button.textContent = originalText; }, 1600);
+  }
+};
 $('#clearDebug').onclick = async () => {
   await api('/api/debug/clear', { method: 'POST' });
   await refreshDebug(true);
