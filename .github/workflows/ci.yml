@@ -18,7 +18,8 @@ jobs:
       - run: node --check server/public/update.js
       - run: node --check updater/app.mjs
       - run: node --check docker/matterbridge-bootstrap.mjs
-      - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh
+      - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh docker/server-entrypoint.sh
+      - run: python3 -m py_compile server/ble/ble_worker.py server/ble/ble_protocol.py
       - run: docker compose config --quiet
 
   test:
@@ -70,6 +71,13 @@ jobs:
         run: |
           docker run --rm --entrypoint sh qnaphomehub-server:ci -c \
             "grep -q 'bleConnection: this.bleConnection' /app/node_modules/node-switchbot/dist/switchbot.js"
+      - name: Verify shared radio runtime dependencies
+        run: |
+          docker run --rm --entrypoint sh qnaphomehub-server:ci -c \
+            'test -x /usr/libexec/bluetooth/bluetoothd && test -x /usr/bin/hciconfig && /opt/ble/bin/python -c "import bleak, dbus_fast"'
+          docker volume create qnaphomehub-radio-ci
+          docker run -d --name radio-ci -v qnaphomehub-radio-ci:/radio \
+            -e HOMEHUB_RADIO_SERVICE=1 qnaphomehub-server:ci node dist/radio-main.js
       - name: Start HomeHub for integration smoke
         shell: bash
         env:
@@ -77,13 +85,14 @@ jobs:
         run: |
           docker network create qnaphomehub-ci
           docker run -d --name homehub-ci --network qnaphomehub-ci -p 8787:8787 \
+            -v qnaphomehub-radio-ci:/radio -e HOMEHUB_SHARED_RADIO=1 \
             -e HOMEHUB_ADMIN_USERNAME=admin \
             -e HOMEHUB_ADMIN_PASSWORD=ci-password \
             -e HOMEHUB_INTERNAL_TOKEN=ci-internal-token \
             qnaphomehub-server:ci
           for attempt in {1..20}; do
             HEALTH="$(curl -fsS http://127.0.0.1:8787/api/health 2>/dev/null || true)"
-            if echo "$HEALTH" | grep -q '"status":"ok"' && echo "$HEALTH" | grep -q "\"version\":\"${HOMEHUB_VERSION}\""; then exit 0; fi
+            if echo "$HEALTH" | grep -q '"available":true' && echo "$HEALTH" | grep -q "\"version\":\"${HOMEHUB_VERSION}\""; then exit 0; fi
             sleep 1
           done
           docker logs homehub-ci
@@ -159,8 +168,10 @@ jobs:
           docker logs homehub-ci 2>/dev/null || true
           docker logs matterbridge-ci 2>/dev/null || true
           docker logs updater-ci 2>/dev/null || true
+          docker logs radio-ci 2>/dev/null || true
       - name: Cleanup integration containers
         if: always()
         run: |
-          docker rm -f updater-ci matterbridge-ci homehub-ci 2>/dev/null || true
+          docker rm -f updater-ci matterbridge-ci homehub-ci radio-ci 2>/dev/null || true
+          docker volume rm qnaphomehub-radio-ci 2>/dev/null || true
           docker network rm qnaphomehub-ci 2>/dev/null || true

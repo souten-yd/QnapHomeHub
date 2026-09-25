@@ -39,3 +39,7 @@ http://QNAP-IP:8787/manage.html
 両ページ上部の `操作` / `管理` から相互に切り替えます。
 
 テーマ設定（BLACK / CYBER）は両ページで共通のlocalStorageを利用するため、片方で変更するともう片方にも反映されます。
+
+## 0.3.0 共通Bluetooth
+
+管理画面のBluetooth欄にradioの状態・使用中の処理・待機数を表示します。SelfCareの画面はポート17863、HomeHubは8787のままです。初回導入は [SHARED-RADIO.md](SHARED-RADIO.md) を参照してください。待機が60秒を超えた操作は実行されず、再操作が必要です。
