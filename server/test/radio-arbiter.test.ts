@@ -26,6 +26,14 @@ describe('Shared USB radio ownership', () => {
     expect(selfCare).not.toHaveBeenCalled();
     expect(arbiter.status().pending).toBe(0);
   });
+  it('keeps a successful Bot result when only the return to BlueZ fails', async () => {
+    const resumeError = vi.fn();
+    const arbiter = new RadioArbiter({ stopHomeHub: async () => {}, stopBlueZ: async () => {},
+      homeHub: async <T>() => 'pressed' as T, selfCare: async <T>() => 'records' as T,
+      resumeSelfCare: async () => { throw new Error('BlueZ unavailable'); }, resumeError });
+    expect(await arbiter.run('homehub', {})).toBe('pressed');
+    expect(resumeError).toHaveBeenCalledOnce();
+  });
   it('serializes concurrent requests and recovers after an operation fails', async () => {
     let active = 0; let maximum = 0;
     const task = async <T>(request: unknown) => { active++; maximum = Math.max(maximum, active); await new Promise(r => setTimeout(r, 5)); active--; if (request === 'fail') throw new Error('failed'); return request as T; };

@@ -29,6 +29,7 @@ export class SharedRadioManager {
   private socketServer?: http.Server;
   private discovered: DiscoveredDevice[] = [];
   private sequence = 0;
+  private bluezError?: string;
   readonly arbiter: RadioArbiter;
 
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
@@ -36,6 +37,10 @@ export class SharedRadioManager {
     this.arbiter = new RadioArbiter({
       stopHomeHub: () => this.stopHomeHub(), stopBlueZ: () => this.stopBlueZ(),
       resumeSelfCare: () => this.startBlueZ(),
+      resumeError: error => {
+        this.bluezError = (error as Error).message;
+        this.debug?.('warn', 'radio', 'Bot operation finished, but SelfCare BlueZ could not resume', { error: this.bluezError });
+      },
       homeHub: <T>(request: unknown) => this.callRaw<T>(request),
       selfCare: <T>(request: unknown) => this.callSelfCare<T>(request),
     });
@@ -96,7 +101,7 @@ export class SharedRadioManager {
   }
 
   private async startBlueZ(): Promise<void> {
-    if (this.bluez && this.bluez.exitCode === null && this.bluez.signalCode === null) return;
+    if (this.bluez?.pid && this.bluez.exitCode === null && this.bluez.signalCode === null) return;
     const bluez = spawn('/usr/libexec/bluetooth/bluetoothd', ['--nodetach'], { stdio: ['ignore', 'ignore', 'inherit'] });
     this.bluez = bluez;
     await new Promise<void>((resolve, reject) => {
@@ -105,6 +110,7 @@ export class SharedRadioManager {
       const exited = () => { clearTimeout(timer); reject(new Error('BlueZ failed to start; check the private D-Bus service')); };
       bluez.once('error', failed); bluez.once('exit', exited);
     });
+    this.bluezError = undefined;
   }
 
   private async pythonResult<T>(child: ReturnType<typeof spawn>, request: unknown): Promise<T> {
@@ -130,7 +136,7 @@ export class SharedRadioManager {
     this.socketServer = http.createServer(async (req, res) => {
       const reply = (status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
+        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
         if (req.method !== 'POST' || !['/run', '/homehub'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }

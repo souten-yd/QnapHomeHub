@@ -4,6 +4,7 @@ export interface RadioDrivers {
   stopHomeHub(): Promise<void>;
   stopBlueZ(): Promise<void>;
   resumeSelfCare?(): Promise<void>;
+  resumeError?(error: unknown): void;
   homeHub<T>(request: unknown): Promise<T>;
   selfCare<T>(request: unknown): Promise<T>;
 }
@@ -30,7 +31,10 @@ export class RadioArbiter {
           try { return await this.drivers.homeHub<T>(request); }
           finally {
             await this.drivers.stopHomeHub();
-            await this.drivers.resumeSelfCare?.();
+            // A successful physical Bot action must not appear to have failed
+            // merely because warming the next owner's daemon failed.
+            try { await this.drivers.resumeSelfCare?.(); }
+            catch (error) { this.drivers.resumeError?.(error); }
           }
         }
         await this.drivers.stopHomeHub();
