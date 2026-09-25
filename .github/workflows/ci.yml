@@ -19,7 +19,7 @@ jobs:
       - run: node --check updater/app.mjs
       - run: node --check docker/matterbridge-bootstrap.mjs
       - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh docker/server-entrypoint.sh
-      - run: python3 -m py_compile server/ble/ble_worker.py server/ble/ble_protocol.py
+      - run: python3 -m py_compile server/ble/ble_worker.py server/ble/ble_protocol.py server/ble/ble_watch.py
       - run: docker compose config --quiet
 
   test:

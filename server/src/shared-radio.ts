@@ -27,6 +27,15 @@ export class SharedRadioManager {
   private bluez?: ChildProcess;
   private pythonWorker?: ChildProcess;
   private socketServer?: http.Server;
+  private watcher?: ChildProcess;
+  private watchStarting?: Promise<void>;
+  private watchTimer?: NodeJS.Timeout;
+  private watchAddresses: string[] = [];
+  private watchLease = 0;
+  private watchReady = false;
+  private watchError?: string;
+  private watchSeen = new Map<string, number>();
+  private closing = false;
   private discovered: DiscoveredDevice[] = [];
   private sequence = 0;
   private bluezError?: string;
@@ -57,12 +66,76 @@ export class SharedRadioManager {
   }
 
   private async stopHomeHub(): Promise<void> {
+    await this.stopWatcher();
     await stopProcess(this.rawWorker);
     this.rawWorker = undefined;
   }
   private async stopBlueZ(): Promise<void> {
+    await this.stopWatcher();
     await stopProcess(this.bluez);
     this.bluez = undefined;
+  }
+
+  private async stopWatcher(): Promise<void> {
+    await this.watchStarting;
+    await stopProcess(this.watcher);
+    this.watcher = undefined;
+    this.watchReady = false;
+  }
+
+  private async maintainWatch(): Promise<void> {
+    if (this.closing || this.arbiter.status().active !== 'idle' || this.arbiter.status().pending) return;
+    if (Date.now() > this.watchLease || !this.watchAddresses.length) {
+      await this.stopWatcher();
+      return;
+    }
+    if (this.watcher || this.watchStarting) return;
+    this.watchStarting = (async () => {
+      await this.startBlueZ();
+      if (this.closing || Date.now() > this.watchLease || !this.watchAddresses.length) return;
+      const child = spawn('/opt/ble/bin/python', ['/app/ble/ble_watch.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      this.watcher = child;
+      let buffer = '';
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', chunk => {
+        buffer += chunk;
+        if (buffer.length > 65536) { child.kill('SIGTERM'); return; }
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          try {
+            const event = JSON.parse(line);
+            if (event.ready) { this.watchReady = true; this.watchError = undefined; }
+            if (typeof event.address === 'string' && this.watchAddresses.includes(event.address)) this.watchSeen.set(event.address, Date.now());
+          } catch { this.watchError = 'Invalid Bluetooth listener response'; }
+        }
+      });
+      child.on('error', error => { this.watchError = error.message; if(this.watcher === child) this.watcher = undefined; this.watchReady = false; });
+      child.stdin!.on('error', error => { this.watchError = error.message; });
+      child.once('exit', (code, signal) => {
+        if (this.watcher === child) { this.watcher = undefined; this.watchReady = false; }
+        if (code && !signal) this.watchError = 'Bluetooth listener exited; retrying';
+      });
+      child.stdin!.end(JSON.stringify({ adapter: `hci${this.getConfig().hciDeviceId}`, addresses: this.watchAddresses }) + '\n');
+    })();
+    try { await this.watchStarting; }
+    catch (error) { this.watchError = (error as Error).message; }
+    finally { this.watchStarting = undefined; }
+  }
+
+  private async configureWatch(request: any): Promise<unknown> {
+    if (request.adapter !== `hci${this.getConfig().hciDeviceId}` || !Array.isArray(request.addresses) || request.addresses.length > 32 ||
+        request.addresses.some((a: unknown) => typeof a !== 'string' || !/^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(a))) throw new Error('Invalid watch configuration');
+    const addresses = [...new Set<string>(request.addresses)].sort();
+    if (JSON.stringify(addresses) !== JSON.stringify(this.watchAddresses)) {
+      this.watchAddresses = addresses;
+      this.watchSeen.clear();
+      // Configuration changes never start a listener during a radio operation.
+      await this.stopWatcher();
+    }
+    this.watchLease = addresses.length ? Date.now() + 60000 : 0;
+    return { supported: true, ready: this.watchReady, error: this.watchError,
+      events: [...this.watchSeen].filter(([, at]) => Date.now() - at < 15000).map(([address, at]) => ({ address, at })) };
   }
 
   private async callRaw<T>(request: any): Promise<T> {
@@ -145,11 +218,12 @@ export class SharedRadioManager {
     this.socketServer = http.createServer(async (req, res) => {
       const reply = (status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
-        if (req.method !== 'POST' || !['/run', '/homehub'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
+        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
+        if (req.method !== 'POST' || !['/run', '/homehub', '/watch'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }
         const request = JSON.parse(body);
+        if (req.url === '/watch') return reply(200, await this.configureWatch(request));
         if (req.url === '/homehub') {
           if (request.action === 'scan') return reply(200, await this.scan(Math.min(60000, Math.max(3000, Number(request.timeoutMs) || this.getConfig().scanTimeoutMs))));
           if (request.action !== 'command' || typeof request.deviceId !== 'string' || !['press','on','off','status','power','forceOff'].includes(request.command)) throw new Error('Invalid HomeHub operation');
@@ -163,9 +237,14 @@ export class SharedRadioManager {
     });
     await new Promise<void>((resolve, reject) => { this.socketServer!.once('error', reject); this.socketServer!.listen(socketPath, () => resolve()); });
     await fs.chmod(socketPath, 0o600);
+    this.watchTimer = setInterval(() => { void this.maintainWatch().catch(error => { this.watchError = String(error); }); }, 2000);
+    this.watchTimer.unref();
   }
 
   async cleanup(): Promise<void> {
+    this.closing = true;
+    clearInterval(this.watchTimer);
+    await this.stopWatcher();
     this.socketServer?.close();
     await stopProcess(this.pythonWorker);
     await this.stopHomeHub();
