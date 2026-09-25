@@ -151,6 +151,11 @@ async function imageVersion(ref) {
   } catch { return null; }
 }
 
+async function homeHubServices() {
+  const services = await command(['docker', 'compose', '-p', composeProject, '--project-directory', projectDir, '-f', path.join(projectDir, 'compose.yaml'), 'config', '--services']);
+  return services.split(/\s+/).includes('radio') ? ['radio', 'homehub', 'matterbridge'] : ['homehub', 'matterbridge'];
+}
+
 async function composeUp(services) {
   await command([
     'docker', 'compose', '-p', composeProject,
@@ -172,7 +177,7 @@ async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs 
       } else {
         const home = await fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(2500) });
         const homeBody = home.ok ? await home.json() : {};
-        if (home.ok && matter.ok && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
+        if (home.ok && matter.ok && (!homeBody.radio?.shared || homeBody.radio.available) && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
         last = `home=${home.status}/${homeBody.version || '-'} matter=${matter.status}`;
       }
     } catch (error) { last = error.message; }
@@ -282,7 +287,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     await command(['docker', 'image', 'inspect', updaterRelease]).then(() => command(['docker', 'tag', updaterRelease, `${image}:updater`])).catch(() => undefined);
 
     state.phase = 'recreating'; await saveJson(stateFile, state);
-    await composeUp(['homehub', 'matterbridge']);
+    await composeUp(await homeHubServices());
     state.phase = 'verifying'; await saveJson(stateFile, state);
     await waitForHealthy(version);
     await delay(5000);
@@ -307,7 +312,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
       if (oldServer) await command(['docker', 'tag', oldServer, `${image}:server`]);
       if (oldMatter) await command(['docker', 'tag', oldMatter, `${image}:matterbridge`]);
       if (oldServer && oldMatter) {
-        await composeUp(['homehub', 'matterbridge']);
+        await composeUp(await homeHubServices());
         await waitForHealthy(null, { timeoutMs: 90000 });
       }
       state.phase = 'error';

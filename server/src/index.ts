@@ -8,6 +8,7 @@ import { DebugEventStore } from './debug-events.js';
 import { uniqueDeviceName } from './device-names.js';
 import { diagnostics } from './diagnostics.js';
 import { SwitchBotManager } from './switchbot-manager.js';
+import { RadioClientManager } from './radio-client.js';
 import type { RegisteredDevice } from './types.js';
 
 type DeviceAction = 'press' | 'on' | 'off' | 'status' | 'power' | 'forceOff';
@@ -41,7 +42,8 @@ if (botPasswordsRaw) {
 }
 
 const auth = new AuthManager(adminUsername, adminPassword);
-const switchbot = new SwitchBotManager(
+const RadioManager = process.env.HOMEHUB_SHARED_RADIO === '1' ? RadioClientManager : SwitchBotManager;
+const switchbot = new RadioManager(
   () => store.get(),
   switchbotToken,
   switchbotSecret,
@@ -131,7 +133,11 @@ async function runDeviceCommand(
 app.disable('x-powered-by');
 app.use(express.json({ limit: '128kb' }));
 
-app.get('/api/health', (_req, res) => res.json({ status: 'ok', authRequired: auth.required, version: appVersion }));
+app.get('/api/health', async (_req, res) => {
+  let radio = { shared: switchbot instanceof RadioClientManager, available: true };
+  if (radio.shared) { try { await (switchbot as RadioClientManager).status(); } catch { radio.available = false; } }
+  res.json({ status: 'ok', authRequired: auth.required, version: appVersion, radio });
+});
 app.post('/api/auth/login', (req, res) => auth.login(req, res));
 app.post('/api/auth/logout', (req, res) => auth.logout(req, res));
 
@@ -210,6 +216,12 @@ app.post('/api/update/apply', async (req, res) => {
     debug.add('error', 'updater', 'Release update request failed', { error: (error as Error).message });
     res.status(503).json({ error: (error as Error).message });
   }
+});
+
+app.get('/api/radio', async (_req, res) => {
+  if (switchbot instanceof RadioClientManager) {
+    try { res.json(await switchbot.status()); } catch (error) { res.status(503).json({ shared: true, error: (error as Error).message }); }
+  } else res.json({ shared: false });
 });
 
 app.get('/api/config', (_req, res) => {

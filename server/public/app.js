@@ -434,3 +434,12 @@ setInterval(() => {
 }, 2000);
 
 boot().catch(error => console.error(error));
+
+async function refreshRadioStatus() {
+  const node = document.getElementById('radioStatus');
+  if (!node) return;
+  try { const radio = await api('/api/radio'); node.textContent = radio.shared ? `共通Bluetooth · SelfCare中心 · 実行: ${radio.active} · 待機: ${radio.pending}` : '従来の直接Bluetooth接続'; }
+  catch { node.textContent = 'Bluetooth管理状態を取得できません'; }
+}
+void refreshRadioStatus();
+setInterval(() => { if (!document.hidden) void refreshRadioStatus(); }, 10000);

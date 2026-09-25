@@ -6,8 +6,8 @@ QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web 
 
 ## 主な機能
 
-- USB BluetoothドングルをLinux HCI経由で直接利用 (`node-switchbot` + Noble)
-- QNAPの古いBlueZ D-Bus APIに依存せずSwitchBot BLEを操作
+- USB Bluetoothを独立したradioサービスで管理。SwitchBotは既存の `node-switchbot` + Noble、SelfCareのOmronはBlueZ/Bleakで制御
+- NASの古いBlueZに依存せず、コンテナ内に新しいBlueZを同梱。SelfCare待機を維持し、Bot操作時だけ一時切替
 - Web UIからBLEスキャン、Bot登録、Press / ON / OFF / 状態取得
 - コマンド操作時に **送信中 / 成功 / 失敗** をカード上へ表示
 - Web UI内の **Webデバッグ** から、API到達、BLE実行、Matterbridge heartbeat、HCI診断を追跡
@@ -23,31 +23,17 @@ QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web 
 
 ## 構成
 
-```text
-SwitchBot Bot
-     │ BLE
-     ▼
-USB Bluetooth dongle → Linux hci0/hci1
-     │
-     ▼
-┌──────────────────────────────┐
-│ qnaphomehub :8787            │
-│ Web UI / Web Debug           │
-│ node-switchbot / Noble       │
-│ BLE serial command queue     │
-└──────────────┬───────────────┘
-               │ localhost + internal token
-               ▼
-┌──────────────────────────────┐
-│ Matterbridge :8283           │
-│ matterbridge-qnaphomehub     │
-└──────────────┬───────────────┘
-               │ Matter / mDNS
-               ▼
-          Echo / Alexa
-```
+| サービス | 待ち受け・役割 |
+| --- | --- |
+| homehub | 8787 / Web・認証・SwitchBot設定・Matter内部API |
+| radio | TCPなし / USB HCIの単一管理、Unixソケット `/radio/ble.sock` |
+| QnapSelfCare（別QPKG） | 17863 / 健康記録、利用者、Omron同期依頼 |
+| matterbridge | 8283 / Matter・Alexa公開 |
+| updater | loopback 8788 / イメージ更新 |
 
-Bluetooth/HCIを所有するのは **HomeHubだけ**です。MatterbridgeはBluetoothを直接開かず、HomeHub内部REST APIを通して同じBLEコマンドキューを利用します。
+0.3.0の標準Composeでは、Bluetooth権限を持つのは **radioだけ**です。HomeHub・SelfCareは共通ソケットへ依頼し、実行中の処理の終了を待って切り替えます。Webポートとデータは分離します。既存のSwitchBotManagerとSerialQueueを再利用します。ESP32は使いません。
+
+**0.2.xからの初回移行は新しいComposeが必要です。** 旧HomeHubを停止してからradioを起動してください。[共通Bluetoothの移行・復旧手順](docs/SHARED-RADIO.md)を先に確認してください。新しいBLE共用とOmron同期は実機検証が必要です。
 
 ---
 
@@ -237,6 +223,7 @@ docker compose ps
 
 ```text
 qnaphomehub               Up
+qnaphomehub-radio         Up
 qnaphomehub-matterbridge  Up (healthy)
 ```
 
@@ -443,7 +430,7 @@ Matter/mDNSのため、QNAPとEcho/Alexaコントローラは同一LANから相�
 1 = hci1
 ```
 
-HCI番号を変えた場合はHomeHub再起動が必要です。
+共有モードでは次の操作からHCI設定を読み直します。SelfCare側も同じHCIへ変更してください。旧直接モードではHomeHubの再起動が必要です。
 
 ```sh
 docker compose restart homehub
@@ -482,7 +469,7 @@ Container Stationから以下を行えます。
 - コンテナログ確認
 - CPU/RAM確認
 
-初期版ではQNAP上のraw HCI差異を吸収するためHomeHubは`privileged: true`を使用します。MatterbridgeはBluetoothを直接利用しません。
+0.3.0の標準構成ではradioだけが `privileged: true` を使用します。WebのHomeHubとMatterbridgeはBluetoothを直接利用しません。
 
 ---
 
@@ -511,7 +498,7 @@ docker compose up -d --remove-orphans
 
 `compose.yaml`やscripts自体が変更されたリリースでは、新しいZIPを別フォルダへ展開し、既存の`secrets/`と`data/`を保持して移行してください。
 
-将来的にはHomeHub Web UIからGHCRイメージ更新とrollbackを行うワンクリック更新を追加予定です。
+Web UIの更新機能は導入済みです。新しいComposeへの初回移行後はradioもserverと同じイメージへ更新し、共通ソケットの生存確認を行います。Compose自体の追加・変更は自動適用しません。
 
 ---
 
@@ -625,4 +612,4 @@ SecretsはDocker imageへ埋め込みません。`.dockerignore`でも`secrets/`
 
 ## License
 
-QnapHomeHub自体はMIT Licenseです。Matterbridge / node-switchbot等は各プロジェクトのライセンスに従います。
+QnapHomeHub本体はMIT Licenseです。別プロセスのOmron読取プログラム `server/ble/` はGPL-3.0-or-laterです。同ディレクトリのソース、THIRD_PARTY.md、ライセンスをイメージにも同梱します。Matterbridge / node-switchbot等は各プロジェクトのライセンスに従います。

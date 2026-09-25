@@ -560,3 +560,7 @@ persistent dataをupdate時に削除
 ```
 
 この原則を維持すれば、QnapHomeHubと同じ更新方式を他のDockerアプリへ安全に展開できます。
+
+## 0.3.0 radioサービス
+
+新しいComposeが配置済みなら更新対象にradioを含めます。radioはserverと同じイメージを利用します。health checkは共有モードのとき共通ソケットの応答も確認します。初回のCompose変更は自動更新の対象外です。移行と旧版への復帰は [SHARED-RADIO.md](SHARED-RADIO.md) を参照してください。
