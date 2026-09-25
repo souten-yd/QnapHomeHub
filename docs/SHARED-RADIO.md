@@ -72,3 +72,7 @@ NAS本体に対応するBlueZ/D-Busがある場合は `sh scripts/install-ble.sh
 SelfCareの「設定・バックアップ → 診断」と操作履歴、HomeHubのBluetooth状態、`docker compose logs --tail=100 radio` を確認します。スキャンは完了するがOmronが出ない場合は機器の通信モードを確認します。`SelfCare adapter must match...` はHCI設定の不一致です。ソケット未検出はComposeサービス未起動またはパス相違です。
 
 HomeHubの配置を変更した場合、SelfCare起動時の環境変数 `SELFCARE_HOMEHUB_SOCKET` で実際のソケットを指定します。既定QPKG起動では標準配置を使います。radioの状態応答はサービスの生存確認であり、実機接続の成功を示すものではありません。
+
+## SelfCareの診断付きペアリング・同期（HomeHub 0.3.1以降）
+
+SelfCare 0.3.7から診断を指定した手動ペアリング・同期ではradio内のPythonワーカーが接続・ペアリングモード・キー設定・履歴読取の段階と、各利用者番号の有効・空・無効件数を返します。記録の生データは失敗例の先頭2件だけ含みます。キーやBluetoothのbond情報は含めません。通常の自動同期に診断用データは付けません。SelfCareの更新だけではradioイメージは更新されないため、HomeHub側のradioも0.3.1へ更新してください。

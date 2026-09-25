@@ -122,7 +122,16 @@ export class SharedRadioManager {
         child.once('error', error => { clearTimeout(timer); reject(error); });
         child.once('close', code => {
           clearTimeout(timer);
-          try { const value = JSON.parse(output); if (code || value.error) throw new Error(value.error || 'Bluetooth worker failed'); resolve(value); }
+          try {
+            const value = JSON.parse(output);
+            if (code || value.error) {
+              const failure = new Error(value.error || 'Bluetooth worker failed') as Error & { diagnostic?: unknown };
+              if (request && typeof request === 'object' && (request as { diagnostic?: unknown }).diagnostic === true &&
+                  value.diagnostic && typeof value.diagnostic === 'object') failure.diagnostic = value.diagnostic;
+              throw failure;
+            }
+            resolve(value);
+          }
           catch (error) { reject(error); }
         });
         child.stdin!.on('error', error => { clearTimeout(timer); reject(error); });
@@ -147,7 +156,10 @@ export class SharedRadioManager {
           return reply(200, await this.command(request.deviceId, request.command, request.password, Math.min(30, Math.max(3, Number(request.holdSeconds) || 10))));
         }
         reply(200, await this.arbiter.run('selfcare', request));
-      } catch (error) { reply(400, { error: (error as Error).message }); }
+      } catch (error) {
+        const failure = error as Error & { diagnostic?: unknown };
+        reply(400, { error: failure.message, ...(failure.diagnostic ? { diagnostic: failure.diagnostic } : {}) });
+      }
     });
     await new Promise<void>((resolve, reject) => { this.socketServer!.once('error', reject); this.socketServer!.listen(socketPath, () => resolve()); });
     await fs.chmod(socketPath, 0o600);

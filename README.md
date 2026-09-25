@@ -31,7 +31,9 @@ QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web 
 | matterbridge | 8283 / Matter・Alexa公開 |
 | updater | loopback 8788 / イメージ更新 |
 
-0.3.0の標準Composeでは、Bluetooth権限を持つのは **radioだけ**です。HomeHub・SelfCareは共通ソケットへ依頼し、実行中の処理の終了を待って切り替えます。Webポートとデータは分離します。既存のSwitchBotManagerとSerialQueueを再利用します。ESP32は使いません。
+0.3.1ではSelfCareの手動診断付きペアリング・同期に対応し、測定データの限定サンプル・読取段階をradioからSelfCareへ返します。平常の同期結果・Bot操作は変わりません。診断値はSelfCareの履歴に保存されるため共有前に確認してください。
+
+0.3.0以降の標準Composeでは、Bluetooth権限を持つのは **radioだけ**です。HomeHub・SelfCareは共通ソケットへ依頼し、実行中の処理の終了を待って切り替えます。Webポートとデータは分離します。既存のSwitchBotManagerとSerialQueueを再利用します。ESP32は使いません。
 
 **0.2.xからの初回移行は新しいComposeが必要です。** 旧HomeHubを停止してからradioを起動してください。[共通Bluetoothの移行・復旧手順](docs/SHARED-RADIO.md)を先に確認してください。新しいBLE共用とOmron同期は実機検証が必要です。
 
@@ -469,7 +471,7 @@ Container Stationから以下を行えます。
 - コンテナログ確認
 - CPU/RAM確認
 
-0.3.0の標準構成ではradioだけが `privileged: true` を使用します。WebのHomeHubとMatterbridgeはBluetoothを直接利用しません。
+0.3.0以降の標準構成ではradioだけが `privileged: true` を使用します。WebのHomeHubとMatterbridgeはBluetoothを直接利用しません。
 
 ---
 
