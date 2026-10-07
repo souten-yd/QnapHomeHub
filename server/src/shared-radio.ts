@@ -34,7 +34,7 @@ export class SharedRadioManager {
   private watchLease = 0;
   private watchReady = false;
   private watchError?: string;
-  private watchSeen = new Map<string, number>();
+  private watchSeen = new Map<string, { at: number; fingerprint?: string; rssi?: number; advertisement?: unknown }>();
   private closing = false;
   private discovered: DiscoveredDevice[] = [];
   private sequence = 0;
