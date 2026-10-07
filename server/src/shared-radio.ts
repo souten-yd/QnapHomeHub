@@ -113,7 +113,14 @@ export class SharedRadioManager {
           try {
             const event = JSON.parse(line);
             if (event.ready) { this.watchReady = true; this.watchError = undefined; }
-            if (typeof event.address === 'string' && this.watchAddresses.includes(event.address)) this.watchSeen.set(event.address, Date.now());
+            if (typeof event.address === 'string' && this.watchAddresses.includes(event.address)) {
+              this.watchSeen.set(event.address, {
+                at: Date.now(),
+                ...(typeof event.fingerprint === 'string' ? { fingerprint: event.fingerprint } : {}),
+                ...(typeof event.rssi === 'number' ? { rssi: event.rssi } : {}),
+                ...(event.advertisement && typeof event.advertisement === 'object' ? { advertisement: event.advertisement } : {}),
+              });
+            }
           } catch { this.watchError = 'Invalid Bluetooth listener response'; }
         }
       });
