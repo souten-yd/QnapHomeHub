@@ -149,7 +149,8 @@ export class SharedRadioManager {
     }
     this.watchLease = addresses.length ? Date.now() + 60000 : 0;
     return { supported: true, ready: this.watchReady, error: this.watchError,
-      events: [...this.watchSeen].filter(([, at]) => Date.now() - at < 15000).map(([address, at]) => ({ address, at })) };
+      events: [...this.watchSeen].filter(([, event]) => Date.now() - event.at < 15000)
+        .map(([address, event]) => ({ address, ...event })) };
   }
 
   private async callRaw<T>(request: any): Promise<T> {
