@@ -1,7 +1,7 @@
 import { SerialQueue } from './queue.js';
 
 export interface RadioDrivers {
-  stopHomeHub(): Promise<void>;
+  stopHomeHub(request?: unknown): Promise<void>;
   stopBlueZ(): Promise<void>;
   resumeSelfCare?(): Promise<void>;
   resumeError?(error: unknown): void;
@@ -37,7 +37,7 @@ export class RadioArbiter {
             catch (error) { this.drivers.resumeError?.(error); }
           }
         }
-        await this.drivers.stopHomeHub();
+        await this.drivers.stopHomeHub(request);
         return await this.drivers.selfCare<T>(request);
       } finally { this.pending--; this.active = 'idle'; }
     });

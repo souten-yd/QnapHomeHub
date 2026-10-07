@@ -85,10 +85,10 @@ HEM-6232Tのキー登録後に同じキーで認証してから通信開始し�
 ### 広告待ち受け（HomeHub 0.3.5 / SelfCare 0.3.14）
 SelfCareの機器設定で待ち受け／周期検索を個別に選択します。共通接続の初期値は待ち受けです。radioの `/watch` はUnixソケット限定で、アダプターと最大32件の登録アドレスを受け取り、受信イベントを返します。常駐Pythonリスナーは対象アドレスの広告のみ通知し、接続・ペアリング・健康データ読取りは行いません。
 
-raw HomeHub操作とSelfCare処理の前にリスナー終了を待ち、idle時のみ再開します。設定更新は60秒のリースで、SelfCare停止時にはリスナーも止まります。`/health` のwatchSupported/watchReady/watchErrorで状態を確認できます。NAS起動状態と広告が届く電波環境が必要で、Bot処理中の検知空白はあります。SelfCare側で既存の最短間隔とジョブ排他を維持します。
+raw HomeHub操作と通常のSelfCare処理の前にリスナー終了を待ち、idle時のみ再開します。例外としてHomeHub 0.3.10以降は、待ち受け広告を契機にしたHBF-228T同期（`action=sync`、`advert_at`あり）だけ同じBlueZ上の広告リスナーを維持して接続します。HCIの所有権やBlueZ daemonを増やすものではなく、HEM-6232T・手動同期・ペアリング・HomeHub操作は従来どおり排他的です。設定更新は60秒のリースで、SelfCare停止時にはリスナーも止まります。`/health` のwatchSupported/watchReady/watchErrorで状態を確認できます。NAS起動状態と広告が届く電波環境が必要で、Bot処理中の検知空白はあります。SelfCare側で既存の最短間隔とジョブ排他を維持します。
 
-### 登録済み機器への直接接続（HomeHub 0.3.6 / SelfCare 0.3.23、HomeHub 0.3.9 / SelfCare 0.3.25改善）
-履歴同期では、ペアリング済みでBlueZに登録されている機器を最大20秒の検索で探し直しません。そのD-Busオブジェクトへ直接接続します。BlueZは次の接続可能な広告で接続するため、リスナーが検知した広告の直後に検索で1回、接続でもう1回広告を待つ必要がありません。BlueZに機器がない場合、または新規ペアリングでは従来どおり検索します。直接接続で接続可能状態にならなければ未検出として扱います（`stage: connection`）。SelfCare待ち受け由来のHBF-228Tは8秒で区切り、次の新しい広告をSelfCare側の再試行契機にします。手動同期・ペアリング・HEM-6232Tは従来どおり20秒です。
+### 登録済み機器への直接接続（HomeHub 0.3.6 / SelfCare 0.3.23、HomeHub 0.3.9 / SelfCare 0.3.25改善、HomeHub 0.3.10 handoff修正）
+履歴同期では、ペアリング済みでBlueZに登録されている機器を最大20秒の検索で探し直しません。そのD-Busオブジェクトへ直接接続します。BlueZは次の接続可能な広告で接続するため、リスナーが検知した広告の直後に検索で1回、接続でもう1回広告を待つ必要がありません。BlueZに機器がない場合、または新規ペアリングでは従来どおり検索します。直接接続で接続可能状態にならなければ未検出として扱います（`stage: connection`）。SelfCare待ち受け由来のHBF-228Tは8秒で区切り、次の新しい広告をSelfCare側の再試行契機にします。0.3.10ではその広告を検知したwatcherを接続開始前に停止せず、同じBlueZ discovery sessionを維持したままworkerへ引き継ぎます。手動同期・ペアリング・HEM-6232Tは従来どおり20秒です。
 
 SelfCareは待ち受け同期の依頼にradioの広告受信時刻 `advert_at`（ミリ秒）を添えます。診断には次の値を返します。
 
@@ -96,6 +96,7 @@ SelfCareは待ち受け同期の依頼にradioの広告受信時刻 `advert_at`�
 - `discovery_method`：`bluez_cache` または `scan`
 - `discovery_ms`、`connect_ms`、`discovery_timeout_s`：検索・接続に要した時間と上限
 - `connection_timeout_s`、`connect_error`：接続待ち上限と失敗種別
+- `watch_preserved_for_connect`：待ち受け由来HBF同期で広告watcherを接続中も維持したか
 - `bluez_cached`：BlueZ object path、AddressType、Connectable、RSSI、Paired/Bonded/Trusted、Connected、ServicesResolved等
 
 測定値や鍵は追加しません。
