@@ -40,7 +40,8 @@ describe('Advertisement listener ownership', () => {
       return { diagnostic:{} };
     });
     const result = await manager.arbiter.run('selfcare', request) as any;
-    expect(result.diagnostic.watch_preserved_for_connect).toBe(true);
+    expect(result.diagnostic).toEqual({});
+    expect(manager.preserveWatcherForSelfCare(request)).toBe(true);
     await manager.cleanup();
   });
   it('validates targets, clears removed events and expires abandoned leases', async () => {
