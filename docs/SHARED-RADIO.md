@@ -87,14 +87,15 @@ SelfCareの機器設定で待ち受け／周期検索を個別に選択します
 
 raw HomeHub操作とSelfCare処理の前にリスナー終了を待ち、idle時のみ再開します。設定更新は60秒のリースで、SelfCare停止時にはリスナーも止まります。`/health` のwatchSupported/watchReady/watchErrorで状態を確認できます。NAS起動状態と広告が届く電波環境が必要で、Bot処理中の検知空白はあります。SelfCare側で既存の最短間隔とジョブ排他を維持します。
 
-### 登録済み機器への直接接続（HomeHub 0.3.6 / SelfCare 0.3.23）
-履歴同期では、ペアリング済みでBlueZに登録されている機器を最大20秒の検索で探し直しません。そのD-Busオブジェクトへ直接接続します。BlueZは次の接続可能な広告で接続するため、リスナーが検知した広告の直後に検索で1回、接続でもう1回広告を待つ必要がありません。BlueZに機器がない場合、または新規ペアリングでは従来どおり検索します。直接接続で20秒以内に広告がなければ、未検出として扱います（`stage: connection`）。
+### 登録済み機器への直接接続（HomeHub 0.3.6 / SelfCare 0.3.23、HomeHub 0.3.9 / SelfCare 0.3.25改善）
+履歴同期では、ペアリング済みでBlueZに登録されている機器を最大20秒の検索で探し直しません。そのD-Busオブジェクトへ直接接続します。BlueZは次の接続可能な広告で接続するため、リスナーが検知した広告の直後に検索で1回、接続でもう1回広告を待つ必要がありません。BlueZに機器がない場合、または新規ペアリングでは従来どおり検索します。直接接続で接続可能状態にならなければ未検出として扱います（`stage: connection`）。SelfCare待ち受け由来のHBF-228Tは8秒で区切り、次の新しい広告をSelfCare側の再試行契機にします。手動同期・ペアリング・HEM-6232Tは従来どおり20秒です。
 
 SelfCareは待ち受け同期の依頼にradioの広告受信時刻 `advert_at`（ミリ秒）を添えます。診断には次の値を返します。
 
 - `elapsed_since_advert_ms`：広告受信から接続処理を始めるまでの時間
 - `discovery_method`：`bluez_cache` または `scan`
 - `discovery_ms`、`connect_ms`、`discovery_timeout_s`：検索・接続に要した時間と上限
-- `bluez_cached`：BlueZ上のペアリング・接続状態
+- `connection_timeout_s`、`connect_error`：接続待ち上限と失敗種別
+- `bluez_cached`：BlueZ object path、AddressType、Connectable、RSSI、Paired/Bonded/Trusted、Connected、ServicesResolved等
 
 測定値や鍵は追加しません。
