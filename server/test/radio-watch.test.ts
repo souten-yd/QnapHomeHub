@@ -49,8 +49,10 @@ describe('Advertisement listener ownership', () => {
     await expect(manager.configureWatch({adapter:'hci1',addresses:[]})).rejects.toThrow('Invalid');
     await expect(manager.configureWatch({adapter:'hci0',addresses:['bad']})).rejects.toThrow('Invalid');
     await manager.configureWatch({adapter:'hci0',addresses:['AA:BB:CC:DD:EE:FF']});
-    manager.watchSeen.set('AA:BB:CC:DD:EE:FF',Date.now());
-    expect((await manager.configureWatch({adapter:'hci0',addresses:['AA:BB:CC:DD:EE:FF']})).events).toHaveLength(1);
+    manager.watchSeen.set('AA:BB:CC:DD:EE:FF',{at:Date.now(),fingerprint:'abc123',rssi:-55});
+    const watched = await manager.configureWatch({adapter:'hci0',addresses:['AA:BB:CC:DD:EE:FF']}) as any;
+    expect(watched.events).toHaveLength(1);
+    expect(watched.events[0]).toMatchObject({address:'AA:BB:CC:DD:EE:FF',fingerprint:'abc123',rssi:-55});
     expect((await manager.configureWatch({adapter:'hci0',addresses:[]})).events).toHaveLength(0);
     manager.watchAddresses = ['AA:BB:CC:DD:EE:FF'];
     manager.watchLease = 0;
