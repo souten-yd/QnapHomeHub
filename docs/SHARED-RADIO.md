@@ -99,4 +99,4 @@ SelfCareは待ち受け同期の依頼にradioの広告受信時刻 `advert_at`�
 - `watch_preserved_for_connect`：待ち受け由来HBF同期で広告watcherを接続中も維持したか
 - `bluez_cached`：BlueZ object path、AddressType、Connectable、RSSI、Paired/Bonded/Trusted、Connected、ServicesResolved等
 
-測定値や鍵は追加しません。
+HomeHub 0.3.11以降は `/watch` の各イベントに、RSSIに影響されない広告fingerprint、RSSI、広告payloadの診断情報を返します。fingerprintは manufacturer data・service data・service UUID・local name・tx power から生成し、新しい測定の確定判定には使いません。SelfCare側で実機比較と広告バースト抑制の診断に利用します。測定値や鍵は追加しません。

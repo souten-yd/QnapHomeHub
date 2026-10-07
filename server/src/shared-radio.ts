@@ -34,7 +34,7 @@ export class SharedRadioManager {
   private watchLease = 0;
   private watchReady = false;
   private watchError?: string;
-  private watchSeen = new Map<string, number>();
+  private watchSeen = new Map<string, { at: number; fingerprint?: string; rssi?: number; advertisement?: unknown }>();
   private closing = false;
   private discovered: DiscoveredDevice[] = [];
   private sequence = 0;
@@ -113,7 +113,14 @@ export class SharedRadioManager {
           try {
             const event = JSON.parse(line);
             if (event.ready) { this.watchReady = true; this.watchError = undefined; }
-            if (typeof event.address === 'string' && this.watchAddresses.includes(event.address)) this.watchSeen.set(event.address, Date.now());
+            if (typeof event.address === 'string' && this.watchAddresses.includes(event.address)) {
+              this.watchSeen.set(event.address, {
+                at: Date.now(),
+                ...(typeof event.fingerprint === 'string' ? { fingerprint: event.fingerprint } : {}),
+                ...(typeof event.rssi === 'number' ? { rssi: event.rssi } : {}),
+                ...(event.advertisement && typeof event.advertisement === 'object' ? { advertisement: event.advertisement } : {}),
+              });
+            }
           } catch { this.watchError = 'Invalid Bluetooth listener response'; }
         }
       });
@@ -142,7 +149,8 @@ export class SharedRadioManager {
     }
     this.watchLease = addresses.length ? Date.now() + 60000 : 0;
     return { supported: true, ready: this.watchReady, error: this.watchError,
-      events: [...this.watchSeen].filter(([, at]) => Date.now() - at < 15000).map(([address, at]) => ({ address, at })) };
+      events: [...this.watchSeen].filter(([, event]) => Date.now() - event.at < 15000)
+        .map(([address, event]) => ({ address, ...event })) };
   }
 
   private async callRaw<T>(request: any): Promise<T> {
