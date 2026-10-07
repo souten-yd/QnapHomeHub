@@ -44,7 +44,7 @@ export class SharedRadioManager {
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
     private readonly secret: string, private readonly debug?: Debug) {
     this.arbiter = new RadioArbiter({
-      stopHomeHub: () => this.stopHomeHub(), stopBlueZ: () => this.stopBlueZ(),
+      stopHomeHub: request => this.stopHomeHub(request), stopBlueZ: () => this.stopBlueZ(),
       resumeSelfCare: () => this.startBlueZ(),
       resumeError: error => {
         this.bluezError = (error as Error).message;
@@ -65,8 +65,15 @@ export class SharedRadioManager {
     return this.arbiter.run('homehub', { action: 'command', deviceId, command, password, holdSeconds });
   }
 
-  private async stopHomeHub(): Promise<void> {
-    await this.stopWatcher();
+  private preserveWatcherForSelfCare(request?: unknown): boolean {
+    if (!request || typeof request !== 'object') return false;
+    const value = request as { action?: unknown; advert_at?: unknown; device?: { model?: unknown } };
+    return value.action === 'sync' && value.device?.model === 'HBF-228T' &&
+      typeof value.advert_at === 'number' && Number.isFinite(value.advert_at) && value.advert_at > 0;
+  }
+
+  private async stopHomeHub(request?: unknown): Promise<void> {
+    if (!this.preserveWatcherForSelfCare(request)) await this.stopWatcher();
     await stopProcess(this.rawWorker);
     this.rawWorker = undefined;
   }
@@ -164,12 +171,26 @@ export class SharedRadioManager {
   private async callSelfCare<T>(request: any): Promise<T> {
     if (!['scan', 'pair', 'sync'].includes(request?.action)) throw new Error('Unknown SelfCare Bluetooth operation');
     if (request.adapter !== `hci${this.getConfig().hciDeviceId}`) throw new Error('SelfCare adapter must match the HomeHub HCI setting');
-    this.debug?.('info', 'radio', 'USB Bluetooth ownership transferred to SelfCare', { action: request.action, adapter: request.adapter });
+    const watchPreserved = this.preserveWatcherForSelfCare(request) && Boolean(this.watcher);
+    this.debug?.('info', 'radio', 'USB Bluetooth ownership transferred to SelfCare',
+      { action: request.action, adapter: request.adapter, watchPreserved });
     await this.startBlueZ();
     const child = spawn('/opt/ble/bin/python', ['/app/ble/ble_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
     this.pythonWorker = child;
     try {
-      return await this.pythonResult<T>(child, request);
+      const result = await this.pythonResult<T>(child, request);
+      if (request?.diagnostic === true && result && typeof result === 'object') {
+        const value = result as Record<string, unknown>;
+        const diagnostic = value.diagnostic;
+        if (diagnostic && typeof diagnostic === 'object')
+          (diagnostic as Record<string, unknown>).watch_preserved_for_connect = watchPreserved;
+      }
+      return result;
+    } catch (error) {
+      const failure = error as Error & { diagnostic?: unknown };
+      if (request?.diagnostic === true && failure.diagnostic && typeof failure.diagnostic === 'object')
+        (failure.diagnostic as Record<string, unknown>).watch_preserved_for_connect = watchPreserved;
+      throw failure;
     } finally { await stopProcess(child); this.pythonWorker = undefined; }
   }
 
