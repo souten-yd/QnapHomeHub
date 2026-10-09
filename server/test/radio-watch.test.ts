@@ -44,28 +44,16 @@ describe('Advertisement listener ownership', () => {
     expect(manager.preserveWatcherForSelfCare(request)).toBe(true);
     await manager.cleanup();
   });
-  it('requests one bounded adapter recovery after repeated HBF connection timeouts', async () => {
+  it('classifies connection failures without scheduling HCI reset', async () => {
     const manager = new SharedRadioManager(config, '', '') as any;
-    const request = { action:'sync', adapter:'hci0', advert_at:Date.now(),
-      diagnostic:true, device:{ model:'HBF-228T' } };
-    const timeout = () => {
-      const error = new Error('missing') as Error & { diagnostic?: unknown };
-      error.diagnostic = { stage:'connection', connect_error:{ type:'TimeoutError', message:'TimeoutError' } };
-      return error;
-    };
-    expect(manager.shouldRecoverHbfConnection(request, timeout())).toBe(false);
-    expect(manager.consecutiveHbfConnectionTimeouts).toBe(1);
-    expect(manager.shouldRecoverHbfConnection(request, timeout())).toBe(true);
-    expect(manager.consecutiveHbfConnectionTimeouts).toBe(2);
-
-    const unrelated = new Error('read failure') as Error & { diagnostic?: unknown };
-    unrelated.diagnostic = { stage:'read' };
-    expect(manager.shouldRecoverHbfConnection(request, unrelated)).toBe(false);
-    expect(manager.consecutiveHbfConnectionTimeouts).toBe(0);
-
-    const hemRequest = { ...request, device:{ model:'HEM-6232T' } };
-    expect(manager.shouldRecoverHbfConnection(hemRequest, timeout())).toBe(false);
-    expect(manager.consecutiveHbfConnectionTimeouts).toBe(0);
+    const timeout = new Error('timeout') as Error & { diagnostic?: unknown };
+    timeout.diagnostic = { stage:'connection', connect_error:{ type:'TimeoutError' } };
+    expect(manager.classifyBluetoothFailure(timeout)).toBe('connection_timeout');
+    const other = new Error('read') as Error & { diagnostic?: unknown };
+    other.diagnostic = { stage:'read' };
+    expect(manager.classifyBluetoothFailure(other)).toBe('read_error');
+    expect(manager.recoverBlueZAdapter).toBeUndefined();
+    await manager.cleanup();
   });
 
   it('validates targets, clears removed events and expires abandoned leases', async () => {
