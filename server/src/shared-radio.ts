@@ -39,6 +39,9 @@ export class SharedRadioManager {
   private discovered: DiscoveredDevice[] = [];
   private sequence = 0;
   private bluezError?: string;
+  private consecutiveHbfConnectionTimeouts = 0;
+  private radioRecoveryCount = 0;
+  private lastRadioRecoveryAt?: string;
   readonly arbiter: RadioArbiter;
 
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
@@ -176,6 +179,57 @@ export class SharedRadioManager {
     } catch (error) { await this.stopHomeHub(); throw error; }
   }
 
+  private async ensureAdapterReady(timeoutMs = 30000): Promise<void> {
+    const adapter = `hci${this.getConfig().hciDeviceId}`;
+    const deadline = Date.now() + timeoutMs;
+    let lastError = 'adapter not present';
+    while (Date.now() < deadline) {
+      try {
+        await fs.access(`/sys/class/bluetooth/${adapter}`);
+        await new Promise<void>((resolve, reject) => execFile('/usr/bin/hciconfig', [adapter, 'up'], { timeout: 5000 },
+          error => error ? reject(error) : resolve()));
+        return;
+      } catch (error) {
+        lastError = (error as Error).message;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    throw new Error(`Bluetooth adapter ${adapter} was not ready after boot: ${lastError}`);
+  }
+
+  private shouldRecoverHbfConnection(request: any, failure: Error & { diagnostic?: unknown }): boolean {
+    if (!this.preserveWatcherForSelfCare(request)) return false;
+    const diagnostic = failure.diagnostic;
+    if (!diagnostic || typeof diagnostic !== 'object') {
+      this.consecutiveHbfConnectionTimeouts = 0;
+      return false;
+    }
+    const value = diagnostic as Record<string, any>;
+    const timeout = value.stage === 'connection' && value.connect_error?.type === 'TimeoutError';
+    if (!timeout) {
+      this.consecutiveHbfConnectionTimeouts = 0;
+      return false;
+    }
+    this.consecutiveHbfConnectionTimeouts += 1;
+    return this.consecutiveHbfConnectionTimeouts >= 2;
+  }
+
+  private async recoverBlueZAdapter(reason: string): Promise<void> {
+    const adapter = `hci${this.getConfig().hciDeviceId}`;
+    this.radioRecoveryCount += 1;
+    this.lastRadioRecoveryAt = new Date().toISOString();
+    this.debug?.('warn', 'radio', 'Recovering Bluetooth adapter after repeated connection timeouts',
+      { adapter, reason, recoveryCount: this.radioRecoveryCount });
+    await this.stopWatcher();
+    await stopProcess(this.bluez);
+    this.bluez = undefined;
+    await new Promise<void>(resolve => execFile('/usr/bin/hciconfig', [adapter, 'down'], { timeout: 5000 }, () => resolve()));
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await this.ensureAdapterReady(15000);
+    await this.startBlueZ();
+    this.consecutiveHbfConnectionTimeouts = 0;
+  }
+
   private async callSelfCare<T>(request: any): Promise<T> {
     if (!['scan', 'pair', 'sync'].includes(request?.action)) throw new Error('Unknown SelfCare Bluetooth operation');
     if (request.adapter !== `hci${this.getConfig().hciDeviceId}`) throw new Error('SelfCare adapter must match the HomeHub HCI setting');
@@ -185,8 +239,11 @@ export class SharedRadioManager {
     await this.startBlueZ();
     const child = spawn('/opt/ble/bin/python', ['/app/ble/ble_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
     this.pythonWorker = child;
+    let recoverAfter = false;
+    let failedDiagnostic: Record<string, any> | undefined;
     try {
       const result = await this.pythonResult<T>(child, request);
+      this.consecutiveHbfConnectionTimeouts = 0;
       if (request?.diagnostic === true && result && typeof result === 'object') {
         const value = result as Record<string, unknown>;
         const diagnostic = value.diagnostic;
@@ -196,14 +253,41 @@ export class SharedRadioManager {
       return result;
     } catch (error) {
       const failure = error as Error & { diagnostic?: unknown };
-      if (request?.diagnostic === true && failure.diagnostic && typeof failure.diagnostic === 'object')
-        (failure.diagnostic as Record<string, unknown>).watch_preserved_for_connect = watchPreserved;
+      if (request?.diagnostic === true && failure.diagnostic && typeof failure.diagnostic === 'object') {
+        failedDiagnostic = failure.diagnostic as Record<string, any>;
+        failedDiagnostic.watch_preserved_for_connect = watchPreserved;
+      }
+      recoverAfter = this.shouldRecoverHbfConnection(request, failure);
+      if (recoverAfter && failedDiagnostic) {
+        failedDiagnostic.radio_recovery = {
+          trigger: 'two_consecutive_hbf_connection_timeouts',
+          scheduled: true,
+          recovery_count: this.radioRecoveryCount + 1,
+        };
+      }
       throw failure;
-    } finally { await stopProcess(child); this.pythonWorker = undefined; }
+    } finally {
+      await stopProcess(child);
+      this.pythonWorker = undefined;
+      if (recoverAfter) {
+        try {
+          await this.recoverBlueZAdapter('two consecutive listener-triggered HBF connection timeouts');
+          if (failedDiagnostic?.radio_recovery) failedDiagnostic.radio_recovery.completed = true;
+        } catch (error) {
+          this.bluezError = (error as Error).message;
+          if (failedDiagnostic?.radio_recovery) {
+            failedDiagnostic.radio_recovery.completed = false;
+            failedDiagnostic.radio_recovery.error = this.bluezError;
+          }
+          this.debug?.('error', 'radio', 'Bluetooth adapter recovery failed', { error: this.bluezError });
+        }
+      }
+    }
   }
 
   private async startBlueZ(): Promise<void> {
     if (this.bluez?.pid && this.bluez.exitCode === null && this.bluez.signalCode === null) return;
+    await this.ensureAdapterReady();
     const bluez = spawn('/usr/libexec/bluetooth/bluetoothd', ['--nodetach'], { stdio: ['ignore', 'ignore', 'inherit'] });
     this.bluez = bluez;
     await new Promise<void>((resolve, reject) => {
@@ -247,7 +331,7 @@ export class SharedRadioManager {
     this.socketServer = http.createServer(async (req, res) => {
       const reply = (status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
+        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, radioRecoveryCount: this.radioRecoveryCount, lastRadioRecoveryAt: this.lastRadioRecoveryAt, consecutiveHbfConnectionTimeouts: this.consecutiveHbfConnectionTimeouts, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
         if (req.method !== 'POST' || !['/run', '/homehub', '/watch'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }
