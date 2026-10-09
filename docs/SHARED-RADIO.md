@@ -106,3 +106,7 @@ HomeHub 0.3.11以降は `/watch` の各イベントに、RSSIに影響されな�
 QNAP起動直後はUSB HCIのカーネル初期化とContainer Stationのradio起動順が前後する場合があります。radioはBlueZを起動する前に選択した `hciN` が `/sys/class/bluetooth` に現れ、`hciconfig hciN up` が成功するまで最大30秒待ちます。待ち受け自体が動作していてもHBF-228Tの接続だけが `TimeoutError` を連続する場合は、同じradioプロセス内で2回連続したHBF connection timeoutを復旧条件とし、watcher停止 → コンテナ内BlueZ停止 → HCI down/up → BlueZ再起動を1回実行します。これはホストQTSのBluetoothサービスを停止する処理ではありません。
 
 復旧はHBF-228Tの待ち受け同期に限定し、HEM-6232T・手動同期・正常な接続・read/session失敗には適用しません。radio `/health` の `radioRecoveryCount`、`lastRadioRecoveryAt`、`consecutiveHbfConnectionTimeouts` で復旧発生を確認できます。
+
+
+### HomeHub 0.3.13: 自動HCIリセット停止
+HBF-228Tの接続タイムアウトだけではHCI/BlueZを再起動しません。接続失敗は `radio_failure_category` と `automatic_hci_reset: false` に記録します。起動時のHCI readiness確認・watcher維持・通常のradio排他は維持します。v0.3.12の自動復旧説明は履歴であり、0.3.13では無効です。
