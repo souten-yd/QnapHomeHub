@@ -100,3 +100,9 @@ SelfCareは待ち受け同期の依頼にradioの広告受信時刻 `advert_at`�
 - `bluez_cached`：BlueZ object path、AddressType、Connectable、RSSI、Paired/Bonded/Trusted、Connected、ServicesResolved等
 
 HomeHub 0.3.11以降は `/watch` の各イベントに、RSSIに影響されない広告fingerprint、RSSI、広告payloadの診断情報を返します。fingerprintは manufacturer data・service data・service UUID・local name・tx power から生成し、新しい測定の確定判定には使いません。SelfCare側で実機比較と広告バースト抑制の診断に利用します。測定値や鍵は追加しません。
+
+### NAS再起動後のBluetooth復旧（HomeHub 0.3.12）
+
+QNAP起動直後はUSB HCIのカーネル初期化とContainer Stationのradio起動順が前後する場合があります。radioはBlueZを起動する前に選択した `hciN` が `/sys/class/bluetooth` に現れ、`hciconfig hciN up` が成功するまで最大30秒待ちます。待ち受け自体が動作していてもHBF-228Tの接続だけが `TimeoutError` を連続する場合は、同じradioプロセス内で2回連続したHBF connection timeoutを復旧条件とし、watcher停止 → コンテナ内BlueZ停止 → HCI down/up → BlueZ再起動を1回実行します。これはホストQTSのBluetoothサービスを停止する処理ではありません。
+
+復旧はHBF-228Tの待ち受け同期に限定し、HEM-6232T・手動同期・正常な接続・read/session失敗には適用しません。radio `/health` の `radioRecoveryCount`、`lastRadioRecoveryAt`、`consecutiveHbfConnectionTimeouts` で復旧発生を確認できます。
