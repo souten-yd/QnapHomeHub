@@ -20,8 +20,8 @@ export function parseDiskstats(source: string): Record<string, DiskCounter> {
     const values = indices.map(i => Number(fields[i]));
     if (values.some(value => !Number.isSafeInteger(value) || value < 0)) continue;
     result[name] = {
-      readOps: values[0], readSectors: values[1], writeOps: values[2],
-      writeSectors: values[3], busyMs: values[4],
+      readOps: values[0]!, readSectors: values[1]!, writeOps: values[2]!,
+      writeSectors: values[3]!, busyMs: values[4]!,
     };
   }
   return result;
