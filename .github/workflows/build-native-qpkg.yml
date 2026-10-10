@@ -12,6 +12,8 @@ permissions:
   contents: read
 jobs:
   build-x86_64:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -39,6 +41,20 @@ jobs:
           test -s dist/QnapHomeHub_0.3.15_x86_64.qpkg
           sha256sum dist/*.qpkg > dist/SHA256SUMS
           ls -lh dist
+      - name: Publish explicitly labeled experimental QPKG pre-release
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'feat/native-qpkg-low-io-selfcare-bridge' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.3.15-qpkg-preview.1 >/dev/null 2>&1; then
+            echo 'Experimental pre-release already exists; no overwrite.'
+            exit 0
+          fi
+          gh release create v0.3.15-qpkg-preview.1 dist/QnapHomeHub_0.3.15_x86_64.qpkg dist/SHA256SUMS \
+            --title 'QnapHomeHub native QPKG 0.3.15 — EXPERIMENTAL' \
+            --prerelease \
+            --target "${{ github.event.pull_request.head.sha }}" \
+            --notes 'Experimental native Web-only x86_64 QPKG for QTS 5.x. NOT verified on NAS. Does not include native Bluetooth radio or BlueZ: existing qnaphomehub-radio Docker is still required for SwitchBot and SelfCare BLE. With radio stopped the Web UI starts in offline/quiet mode, no Bluetooth control is available. Stop the legacy qnaphomehub Web container (port 8787) before installing. Preserve existing data and do not remove SelfCare DB or Bluetooth keys. See docs/NATIVE-QPKG.md.'
       - uses: actions/upload-artifact@v4
         with:
           name: QnapHomeHub_0.3.15_x86_64_PREVIEW
