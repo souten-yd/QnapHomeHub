@@ -1,8 +1,24 @@
 name: CI
 on:
   pull_request:
+    paths-ignore:
+      - 'native/**'
+      - 'qpkg/**'
+      - 'tests/test_native_webapp.py'
+      - 'scripts/build-native-qpkg.sh'
+      - 'compose.low-io.yaml'
+      - 'docs/NATIVE-QPKG.md'
+      - '.github/workflows/native-qpkg.yml'
   push:
     branches: [main]
+    paths-ignore:
+      - 'native/**'
+      - 'qpkg/**'
+      - 'tests/test_native_webapp.py'
+      - 'scripts/build-native-qpkg.sh'
+      - 'compose.low-io.yaml'
+      - 'docs/NATIVE-QPKG.md'
+      - '.github/workflows/native-qpkg.yml'
 permissions:
   contents: read
 jobs:
