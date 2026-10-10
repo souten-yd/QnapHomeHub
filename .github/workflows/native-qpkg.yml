@@ -7,6 +7,8 @@ on:
       - 'tests/test_native_*.py'
       - 'scripts/build-native-qpkg.sh'
       - 'compose.low-io.yaml'
+      - 'scripts/qnap-quiet-eval.sh'
+      - 'docs/QUIET-MODE.md'
       - 'docs/NATIVE-QPKG.md'
       - '.github/workflows/native-qpkg.yml'
   push:
@@ -30,7 +32,8 @@ jobs:
         run: |
           bash -n scripts/build-native-qpkg.sh
           sh -n qpkg/shared/homehub.sh
-          python3 -m py_compile native/webapp.py native/migration.py tests/test_native_webapp.py tests/test_native_migration.py
+          sh -n scripts/qnap-quiet-eval.sh
+          python3 -m py_compile native/webapp.py native/migration.py native/quiet_eval.py tests/test_native_webapp.py tests/test_native_migration.py
       - name: Integration test without writing SelfCare DB
         run: python3 -m unittest discover -s tests -p 'test_native_*.py' -v
       - name: Confirm low-IO overlay is valid
