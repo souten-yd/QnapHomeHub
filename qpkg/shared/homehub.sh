@@ -41,7 +41,16 @@ start)
     [ -d /share/Container ] || { echo '/share/Container not mounted; refusing startup' >&2; exit 1; }
     [ -f "$data/settings.json" ] || { echo 'Existing HomeHub settings.json missing; refusing empty migration' >&2; exit 1; }
     python=$(find_python) || { echo 'Python >= 3.9 not found; /opt/bin/python3.11 recommended' >&2; exit 1; }
+    [ -S "$radio" ] || { echo 'SelfCare shared-radio Unix socket missing; refusing native Web startup' >&2; exit 1; }
+    [ -r "$secrets/homehub_admin_username.txt" ] && [ -r "$secrets/homehub_admin_password.txt" ] ||
+        { echo 'Existing HomeHub authentication secrets are not readable; refusing startup' >&2; exit 1; }
+    # Detect legacy Docker Web on 8787 BEFORE starting QPKG Web; never stop it implicitly.
+    if ! "$python" -c 'import socket; s=socket.socket(); s.bind(("0.0.0.0",8787)); s.close()' >/dev/null 2>&1; then
+        echo 'Port 8787 is already occupied (possibly legacy Docker qnaphomehub). Stop only its Web container before enabling this QPKG.' >&2
+        exit 1
+    fi
     umask 077
+    export PYTHONDONTWRITEBYTECODE=1
     # No request access log; no Docker operation, no QNAP BlueZ changes.
     "$python" "$root/webapp.py" --port 8787 --data-dir "$data" --secrets-dir "$secrets" --radio-socket "$radio" --public-dir "$root/public" --version 0.3.15 </dev/null >/dev/null 2>&1 &
     echo $! > "$pidfile"
