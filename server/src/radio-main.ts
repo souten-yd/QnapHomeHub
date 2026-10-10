@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { readSecret } from './config.js';
 import { SharedRadioManager } from './shared-radio.js';
+import { RadioLogLimiter } from './radio-logging.js';
 import type { AppConfig } from './types.js';
 const fallback: AppConfig = { hciDeviceId: 0, scanTimeoutMs: 10000, apiFallback: false, scanOnStartup: false, devices: [] };
 function config(): AppConfig {
@@ -16,8 +17,11 @@ function config(): AppConfig {
   }
 }
 const [token, secret] = await Promise.all([readSecret('SWITCHBOT_TOKEN'), readSecret('SWITCHBOT_SECRET')]);
+// Routine watcher/heartbeat messages stay in RAM. Persistent Docker logging
+// is disabled in compose.yaml. Explicit diagnostic mode can restore output.
+const radioLog = new RadioLogLimiter((_level, line) => console.warn(line));
 const manager = new SharedRadioManager(config, token, secret,
-  (level, source, message) => console.log(JSON.stringify({ level, source, message })));
+  (level, source, message) => radioLog.write(level, source, message));
 await manager.listen();
 const shutdown = () => { void manager.cleanup().finally(() => process.exit(0)); };
 process.on('SIGTERM', shutdown);
