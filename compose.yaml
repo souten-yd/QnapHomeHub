@@ -39,9 +39,18 @@ services:
     restart: unless-stopped
     privileged: true
     stop_grace_period: 15s
+    # Disable per-request Docker log-file writes; Web diagnostics remain in RAM.
+    logging:
+      driver: "none"
+    # Only transient D-Bus/runtime files live on RAM. Bonding data stays on HDD.
+    tmpfs:
+      - /run/dbus:rw,nosuid,nodev,noexec,size=4m
+      - /tmp:rw,nosuid,nodev,size=16m
     command: ["node", "dist/radio-main.js"]
     environment:
       HOMEHUB_RADIO_SERVICE: "1"
+      HOMEHUB_RADIO_LOG_LEVEL: "warn"
+      PYTHONDONTWRITEBYTECODE: "1"
       SWITCHBOT_TOKEN_FILE: /run/secrets/switchbot_token
       SWITCHBOT_SECRET_FILE: /run/secrets/switchbot_secret
     volumes:
