@@ -50,6 +50,8 @@ class NativeTests(unittest.TestCase):
         self.data.mkdir()
         self.secrets = root / 'secrets'
         self.secrets.mkdir()
+        (self.secrets / 'homehub_admin_username.txt').write_text('admin')
+        (self.secrets / 'homehub_admin_password.txt').write_text('')
         self.public = root / 'public'
         self.public.mkdir()
         (self.public / 'index.html').write_text('HomeHub test index')
