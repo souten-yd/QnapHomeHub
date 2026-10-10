@@ -1,11 +1,14 @@
-// Progressive QPKG-specific UI adjustments; keep existing control and admin layouts.
+// Progressive QPKG-specific UI adjustments; preserve existing control and admin layouts.
 (() => {
-  const hide = selector => document.querySelectorAll(selector).forEach(node => { node.style.display = 'none'; });
+  const stylesheet = document.createElement('style');
+  // Device cards are rendered after this script: CSS is intentional.
+  stylesheet.textContent = `
+    .toggleMatter, .matter, .deviceSettings label:has(.editMatterType),
+    .updateSubsection, #applyMatterUpdate { display: none !important; }
+  `;
+  document.head.append(stylesheet);
   const matter = document.querySelector('#matterLink');
   if (matter) matter.closest('section').style.display = 'none';
-  const track = document.querySelector('#matterUpdateBadge');
-  if (track) track.closest('.updateSubsection').style.display = 'none';
-  hide('.toggleMatter, .matter, .deviceSettings .editMatterType, .deviceSettings .editMatterType + *, #applyMatterUpdate');
   const restart = document.querySelector('#restart');
   if (restart) {
     restart.disabled = true;
@@ -16,5 +19,6 @@
   const update = document.querySelector('#applyUpdate');
   if (update) update.style.display = 'none';
   const description = document.querySelector('.updateCard .sectionHead p');
-  if (description) description.textContent = 'ネイティブQPKG試験版です。Web自己更新は未対応のためApp Centerを使用してください。';
+  if (description) description.textContent =
+    'ネイティブQPKG試験版です。Web自己更新は未対応のためApp Centerを使用してください。';
 })();
