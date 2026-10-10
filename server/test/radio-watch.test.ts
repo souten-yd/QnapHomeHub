@@ -56,6 +56,24 @@ describe('Advertisement listener ownership', () => {
     await manager.cleanup();
   });
 
+  it('never starts private BlueZ or raw HCI with host BlueZ selected', async () => {
+    const previous = process.env.HOMEHUB_BLUEZ_MODE;
+    process.env.HOMEHUB_BLUEZ_MODE = 'host';
+    try {
+      const manager = new SharedRadioManager(config, '', '') as any;
+      manager.ensureAdapterReady = vi.fn(async () => {});
+      await manager.startBlueZ();
+      expect(manager.bluez).toBeUndefined();
+      await expect(manager.callRaw({ action:'scan' })).rejects.toThrow('Raw HCI operations are disabled');
+      await manager.stopBlueZ();
+      expect(manager.bluez).toBeUndefined();
+      await manager.cleanup();
+    } finally {
+      if (previous === undefined) delete process.env.HOMEHUB_BLUEZ_MODE;
+      else process.env.HOMEHUB_BLUEZ_MODE = previous;
+    }
+  });
+
   it('validates targets, clears removed events and expires abandoned leases', async () => {
     const manager = new SharedRadioManager(config, '', '') as any;
     await expect(manager.configureWatch({adapter:'hci1',addresses:[]})).rejects.toThrow('Invalid');
