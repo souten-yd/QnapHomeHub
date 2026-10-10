@@ -1,0 +1,37 @@
+name: Native QPKG lightweight checks
+on:
+  pull_request:
+    paths:
+      - 'native/**'
+      - 'qpkg/**'
+      - 'tests/test_native_webapp.py'
+      - 'scripts/build-native-qpkg.sh'
+      - 'compose.low-io.yaml'
+      - 'docs/NATIVE-QPKG.md'
+      - '.github/workflows/native-qpkg.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - 'qpkg/**'
+      - 'tests/test_native_webapp.py'
+      - 'scripts/build-native-qpkg.sh'
+      - 'compose.low-io.yaml'
+      - 'docs/NATIVE-QPKG.md'
+      - '.github/workflows/native-qpkg.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate scripts and Python
+        run: |
+          bash -n scripts/build-native-qpkg.sh
+          sh -n qpkg/shared/homehub.sh
+          python3 -m py_compile native/webapp.py tests/test_native_webapp.py
+      - name: Integration test without writing SelfCare DB
+        run: python3 -m unittest discover -s tests -p 'test_native_webapp.py' -v
+      - name: Confirm low-IO overlay is valid
+        run: docker compose -f compose.yaml -f compose.low-io.yaml config --quiet
