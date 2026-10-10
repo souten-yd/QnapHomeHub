@@ -15,7 +15,7 @@ export function parseDiskstats(source: string): Record<string, DiskCounter> {
     if (fields.length < 14) continue;
     const name = fields[2];
     // Whole, physical disks only. In RAID1 measure each physical member separately.
-    if (!/^(?:sd[a-z]+|hd[a-z]+|nvme\d+n\d+)$/.test(name)) continue;
+    if (!name || !/^(?:sd[a-z]+|hd[a-z]+|nvme\d+n\d+)$/.test(name)) continue;
     const indices = [3, 5, 7, 9, 12];
     const values = indices.map(i => Number(fields[i]));
     if (values.some(value => !Number.isSafeInteger(value) || value < 0)) continue;
