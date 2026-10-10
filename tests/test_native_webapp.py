@@ -99,6 +99,20 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(marker.stat().st_mtime_ns, before)
         self.assertEqual({p.name for p in self.data.iterdir()}, {'settings.json'})
 
+    def test_radio_stopped_still_serves_dashboard_without_writing_settings(self):
+        from unittest.mock import patch
+        marker = self.data / 'settings.json'
+        before = marker.stat().st_mtime_ns
+        with patch('webapp.radio_request', side_effect=ConnectionRefusedError('radio stopped')):
+            status, health, _ = self.request('GET', '/api/health')
+            self.assertEqual(status, 200)
+            self.assertFalse(health['radio']['available'])
+            self.assertTrue(health['nativeQpkg'])
+            status, devices, _ = self.request('GET', '/api/devices')
+            self.assertEqual(status, 200)
+            self.assertEqual(devices['devices'][0]['id'], 'BOT-1')
+        self.assertEqual(marker.stat().st_mtime_ns, before)
+
     def test_switchbot_uses_shared_radio(self):
         status, result, _ = self.request('POST', '/api/devices/BOT-1/press')
         self.assertEqual(status, 200)
