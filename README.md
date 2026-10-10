@@ -1,5 +1,17 @@
 # QnapHomeHub
 
+> **Experimental native QPKG (0.3.15 preview):** A lightweight Python Web/API
+> frontend is being introduced to reduce idle disk writes and remove the
+> Docker **homehub Web** container. The existing `qnaphomehub-radio` container
+> remains mandatory for shared SelfCare/Omron and SwitchBot Bluetooth.
+> Docker-free radio and bundled BlueZ are separate milestones, not yet
+> implemented. This QPKG is opt-in, not a drop-in replacement, and its Web
+> QPKG updater is not yet available. See [Native QPKG preview and safety
+> conditions](docs/NATIVE-QPKG.md). For the existing Docker radio,
+> [compose.low-io.yaml](compose.low-io.yaml) offers an optional RAM D-Bus and
+> disabled container logging overlay after NAS testing.
+
+
 QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web UIとMatter/Alexaの両方から操作するDockerプロジェクトです。
 
 主対象は **QNAP TS-253Be / x86_64 + USB Bluetoothドングル + Container Station** です。
