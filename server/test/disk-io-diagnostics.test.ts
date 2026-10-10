@@ -38,9 +38,10 @@ describe('Low-write radio diagnostics', () => {
   });
 
   it('strips MACs and event details from shareable logs', () => {
-    const cleaned = safeEvents([{ level: 'warn', at: '2026-10-11T00:00:00Z',
+    const rawEvents = [{ level: 'warn', at: '2026-10-11T00:00:00Z',
       source: 'ble', message: 'Device 12:34:56:78:AB:CD unavailable',
-      details: { token: 'private-secret' } }]);
+      details: { token: 'private-secret' } }];
+    const cleaned = safeEvents(rawEvents);
     expect(JSON.stringify(cleaned)).not.toContain('12:34');
     expect(JSON.stringify(cleaned)).not.toContain('private-secret');
     expect(safeRadio({ shared: true, watchError: 'private path /secrets/123',
