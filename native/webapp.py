@@ -98,6 +98,10 @@ class AppState:
         else:
             self.config = self.normalize(CONFIG_DEFAULTS)
             self.persist()
+        # Runs without Docker, BlueZ or any persistent access log.
+        from qpkg_update import Updater
+        self.updater = Updater(self.data.parent, Path(__file__).resolve().parent, self.version)
+        self.updater.start_scheduler()
         self.event('info', 'system', 'Native QPKG HomeHub initialized')
 
     @staticmethod
@@ -413,12 +417,23 @@ class Handler(BaseHTTPRequestHandler):
                 a.events.clear()
             return self.send_json(204, {})
         if route.startswith('/api/update/'):
-            if route.endswith('/status') and method == 'GET':
-                return self.send_json(200, dict(currentVersion=a.version, latestVersion=None, latestTag=None,
-                    phase='idle', busy=False, updateAvailable=False, autoUpdate=False,
-                    lastError='QPKG Web更新は未対応です。App Centerで更新してください。',
-                    matterbridge=dict(phase='idle', updateAvailable=False)))
-            return self.send_json(409, dict(error='Native QPKG Web update is not yet supported'))
+            try:
+                if route == '/api/update/status' and method == 'GET':
+                    return self.send_json(200, a.updater.status())
+                if route == '/api/update/check' and method == 'POST':
+                    if self.read_json():
+                        raise ValueError('Update check takes no arguments')
+                    return self.send_json(200, a.updater.check())
+                if route == '/api/update/config' and method == 'PATCH':
+                    return self.send_json(200, a.updater.configure(self.read_json()))
+                if route == '/api/update/apply' and method == 'POST':
+                    payload = self.read_json()
+                    if set(payload) != {'tag'}:
+                        raise ValueError('Only the verified release tag is accepted')
+                    return self.send_json(202, a.updater.apply(payload['tag']))
+            except (ValueError, OSError) as error:
+                return self.send_json(409, dict(error=str(error)[:400]))
+            return self.send_json(404, dict(error='Unknown QPKG updater endpoint'))
         if route == '/api/system/restart' and method == 'POST':
             return self.send_json(409, dict(error='QPKGの再起動はQTS App Centerから実行してください'))
         return self.send_json(404, dict(error='Unknown endpoint'))
@@ -458,7 +473,7 @@ def main():
     parser.add_argument('--secrets-dir', default=DEFAULT_SECRETS)
     parser.add_argument('--radio-socket', default=DEFAULT_RADIO)
     parser.add_argument('--public-dir', default=str(DEFAULT_WEBROOT))
-    parser.add_argument('--version', default='0.3.15')
+    parser.add_argument('--version', default='0.3.16')
     args = parser.parse_args()
     os.umask(0o077)
     state = AppState(args.data_dir, args.secrets_dir, args.radio_socket, args.version, args.public_dir)
