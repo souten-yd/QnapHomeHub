@@ -1,0 +1,13 @@
+# Optional, opt-in low-disk-write overlay for the existing private BlueZ radio.
+# Do not use with compose.host-bluez.yaml: it mounts /run/dbus from the host.
+# docker compose -f compose.yaml -f compose.low-io.yaml config
+# docker compose -f compose.yaml -f compose.low-io.yaml up -d --no-deps --force-recreate radio
+services:
+  radio:
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    logging:
+      driver: "none"
+    tmpfs:
+      - /run/dbus:rw,nosuid,nodev,noexec,size=4m
+      - /tmp:rw,nosuid,nodev,size=16m
