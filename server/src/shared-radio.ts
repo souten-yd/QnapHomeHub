@@ -156,6 +156,7 @@ export class SharedRadioManager {
   }
 
   private async callRaw<T>(request: any): Promise<T> {
+    if (this.hostBlueZ) throw new Error('Raw HCI operations are disabled in experimental host BlueZ mode to avoid host daemon contention');
     if (!this.rawWorker || this.rawWorker.exitCode !== null || this.rawWorker.signalCode !== null) {
       const adapter = `hci${this.getConfig().hciDeviceId}`;
       if (!/^hci\d{1,2}$/.test(adapter)) throw new Error('Invalid HCI adapter');
