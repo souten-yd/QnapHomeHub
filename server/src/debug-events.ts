@@ -33,7 +33,9 @@ export class DebugEventStore {
     const threshold = process.env.HOMEHUB_LOG_LEVEL ?? 'warn';
     const shouldPrint = level === 'error' ||
       (level === 'warn' && threshold !== 'error') ||
-      (level === 'info' && (threshold === 'info' || threshold === 'debug'));
+      (level === 'info' && (threshold === 'info' || threshold === 'debug' ||
+        // A real plugin state change is rare and required by existing Docker smoke tests.
+        (source === 'matterbridge' && message === 'Matterbridge plugin status changed')));
     if (shouldPrint) {
       const prefix = `[HomeHub:${source}] ${message}`;
       if (level === 'error') console.error(prefix, details ?? '');
