@@ -14,6 +14,17 @@ cp "$root/qpkg/package_routines" "$work/package_routines"
 cp "$root/qpkg/shared/homehub.sh" "$work/shared/homehub.sh"
 cp "$root/native/webapp.py" "$work/shared/webapp.py"
 cp -R "$root/server/public" "$work/shared/public"
+cp "$root/native/native-ui.js" "$work/shared/public/native-ui.js"
+# Keep the upstream HomeHub UI; append only QPKG-specific presentation fixes.
+python3 - "$work/shared/public/manage.html" <<'PY'
+from pathlib import Path
+import sys
+page = Path(sys.argv[1])
+text = page.read_text()
+assert '<script type="module" src="/update.js"></script>' in text
+text = text.replace('</body>', '  <script src="/native-ui.js"></script>\\n</body>')
+page.write_text(text)
+PY
 # QDK icons are compiled from existing HomeHub artwork (no extra binary dependencies).
 cp "$root/server/public/favicon.png" "$work/icons/QnapHomeHub.png"
 cp "$root/server/public/apple-touch-icon.png" "$work/icons/QnapHomeHub_80.png"
