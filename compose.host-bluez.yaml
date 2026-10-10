@@ -1,0 +1,10 @@
+# Experimental QTS-host BlueZ mode. Use with:
+# docker compose -f compose.yaml -f compose.host-bluez.yaml up -d --no-deps --force-recreate radio
+# Requires an existing QTS system D-Bus socket and working host BlueZ.
+# Do not run raw SwitchBot HCI commands in this mode.
+services:
+  radio:
+    environment:
+      HOMEHUB_BLUEZ_MODE: "host"
+    volumes:
+      - /run/dbus:/run/dbus:ro
