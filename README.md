@@ -1,5 +1,7 @@
 # QnapHomeHub
 
+**静音化優先の評価:** SelfCareの自動同期とSwitchBot操作を一時停止してよい場合は、まずDocker版のHomeHub全サービス（radioを含む）とSelfCare QPKGを停止し、RAID1の物理HDD Write IOPSを比較してください。データを削除する必要はありません。手順は [ディスクアクセス最小化・全停止評価](docs/QUIET-MODE.md) を参照してください。QPKG化はその後の任意の段階です。
+
 > **Experimental native QPKG (0.3.15 preview):** A lightweight Python Web/API
 > frontend is being introduced to reduce idle disk writes and remove the
 > Docker **homehub Web** container. The existing `qnaphomehub-radio` container
