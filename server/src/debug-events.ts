@@ -27,10 +27,19 @@ export class DebugEventStore {
     this.events.push(event);
     if (this.events.length > this.maxEvents) this.events.splice(0, this.events.length - this.maxEvents);
 
-    const prefix = `[HomeHub:${source}] ${message}`;
-    if (level === 'error') console.error(prefix, details ?? '');
-    else if (level === 'warn') console.warn(prefix, details ?? '');
-    else console.log(prefix, details ?? '');
+    // Web debug history is in RAM; Docker stdout can be persisted to HDD.
+    // Routine info events (including heartbeat/sync polling) stay in memory.
+    // Set HOMEHUB_LOG_LEVEL=info temporarily when diagnosing a BLE issue.
+    const threshold = process.env.HOMEHUB_LOG_LEVEL ?? 'warn';
+    const shouldPrint = level === 'error' ||
+      (level === 'warn' && threshold !== 'error') ||
+      (level === 'info' && (threshold === 'info' || threshold === 'debug'));
+    if (shouldPrint) {
+      const prefix = `[HomeHub:${source}] ${message}`;
+      if (level === 'error') console.error(prefix, details ?? '');
+      else if (level === 'warn') console.warn(prefix, details ?? '');
+      else console.log(prefix, details ?? '');
+    }
     return event;
   }
 
