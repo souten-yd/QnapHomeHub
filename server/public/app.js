@@ -443,3 +443,63 @@ async function refreshRadioStatus() {
 }
 void refreshRadioStatus();
 setInterval(() => { if (!document.hidden) void refreshRadioStatus(); }, 10000);
+
+
+let latestIoReport = '';
+document.getElementById('ioDiagRun')?.addEventListener('click', async () => {
+  const run = document.getElementById('ioDiagRun');
+  const copy = document.getElementById('ioDiagCopy');
+  const download = document.getElementById('ioDiagDownload');
+  const message = document.getElementById('ioDiagMessage');
+  const result = document.getElementById('ioDiagResult');
+  run.disabled = true;
+  copy.disabled = true;
+  download.disabled = true;
+  latestIoReport = '';
+  result.classList.add('hidden');
+  message.textContent = '物理HDDのI/Oを15秒間測定中です。NASには診断ログを書き込みません…';
+  try {
+    const report = await api('/api/diagnostics/io', { method: 'POST' });
+    latestIoReport = [
+      'QnapHomeHub low-I/O diagnostic (manual, redacted)',
+      JSON.stringify(report, null, 2),
+    ].join('\n');
+    result.textContent = latestIoReport;
+    result.classList.remove('hidden');
+    copy.disabled = false;
+    download.disabled = false;
+    message.textContent = '診断完了。ログをコピーしてチャットへ貼れます。';
+    document.getElementById('ioDiagBadge').textContent = '完了';
+  } catch (error) {
+    message.textContent = '診断失敗: ' + error.message;
+    document.getElementById('ioDiagBadge').textContent = 'エラー';
+  } finally {
+    run.disabled = false;
+  }
+});
+document.getElementById('ioDiagCopy')?.addEventListener('click', async () => {
+  if (!latestIoReport) return;
+  const btn = document.getElementById('ioDiagCopy');
+  try {
+    await copyText(latestIoReport);
+    btn.textContent = 'コピー済み';
+    setTimeout(() => { btn.textContent = 'ログをコピー'; }, 1500);
+  } catch (error) {
+    alert('コピーできませんでした。TXT保存をお試しください: ' + error.message);
+  }
+});
+document.getElementById('ioDiagDownload')?.addEventListener('click', () => {
+  if (!latestIoReport) return;
+  const blob = new Blob([latestIoReport], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'QnapHomeHub-disk-io-diagnostic.txt';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+});
