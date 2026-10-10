@@ -41,7 +41,8 @@ start)
     [ -d /share/Container ] || { echo '/share/Container not mounted; refusing startup' >&2; exit 1; }
     [ -f "$data/settings.json" ] || { echo 'Existing HomeHub settings.json missing; refusing empty migration' >&2; exit 1; }
     python=$(find_python) || { echo 'Python >= 3.9 not found; /opt/bin/python3.11 recommended' >&2; exit 1; }
-    [ -S "$radio" ] || { echo 'SelfCare shared-radio Unix socket missing; refusing native Web startup' >&2; exit 1; }
+    # HomeHub Web is allowed to remain quiet while radio and SelfCare are stopped.
+    # BLE endpoints report unavailable; no watchdog or reconnect worker starts.
     [ -r "$secrets/homehub_admin_username.txt" ] && [ -r "$secrets/homehub_admin_password.txt" ] ||
         { echo 'Existing HomeHub authentication secrets are not readable; refusing startup' >&2; exit 1; }
     # Detect legacy Docker Web on 8787 BEFORE starting QPKG Web; never stop it implicitly.
