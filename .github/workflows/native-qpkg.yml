@@ -4,7 +4,7 @@ on:
     paths:
       - 'native/**'
       - 'qpkg/**'
-      - 'tests/test_native_webapp.py'
+      - 'tests/test_native_*.py'
       - 'scripts/build-native-qpkg.sh'
       - 'compose.low-io.yaml'
       - 'docs/NATIVE-QPKG.md'
@@ -14,7 +14,7 @@ on:
     paths:
       - 'native/**'
       - 'qpkg/**'
-      - 'tests/test_native_webapp.py'
+      - 'tests/test_native_*.py'
       - 'scripts/build-native-qpkg.sh'
       - 'compose.low-io.yaml'
       - 'docs/NATIVE-QPKG.md'
@@ -30,8 +30,8 @@ jobs:
         run: |
           bash -n scripts/build-native-qpkg.sh
           sh -n qpkg/shared/homehub.sh
-          python3 -m py_compile native/webapp.py tests/test_native_webapp.py
+          python3 -m py_compile native/webapp.py native/migration.py tests/test_native_webapp.py tests/test_native_migration.py
       - name: Integration test without writing SelfCare DB
-        run: python3 -m unittest discover -s tests -p 'test_native_webapp.py' -v
+        run: python3 -m unittest discover -s tests -p 'test_native_*.py' -v
       - name: Confirm low-IO overlay is valid
         run: docker compose -f compose.yaml -f compose.low-io.yaml config --quiet
