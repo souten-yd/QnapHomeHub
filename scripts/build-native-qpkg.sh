@@ -13,6 +13,7 @@ cp "$root/qpkg/qpkg.cfg" "$work/qpkg.cfg"
 cp "$root/qpkg/package_routines" "$work/package_routines"
 cp "$root/qpkg/shared/homehub.sh" "$work/shared/homehub.sh"
 cp "$root/native/webapp.py" "$work/shared/webapp.py"
+cp "$root/native/migration.py" "$work/shared/migration.py"
 cp -R "$root/server/public" "$work/shared/public"
 cp "$root/native/native-ui.js" "$work/shared/public/native-ui.js"
 # Keep the upstream HomeHub UI; append only QPKG-specific presentation fixes.
