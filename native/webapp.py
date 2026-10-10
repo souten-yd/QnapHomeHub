@@ -80,6 +80,12 @@ class AppState:
         self.events = deque(maxlen=250)
         self.seq = 0
         self.discovered = []
+        # Preserve Docker authentication. Missing/unreadable password files
+        # must never silently turn a previously protected NAS service public.
+        for filename in ('homehub_admin_username.txt', 'homehub_admin_password.txt'):
+            source = self.secrets / filename
+            if not source.is_file():
+                raise ValueError(f'Missing HomeHub authentication secret: {filename}')
         self.username = read_secret(self.secrets, 'homehub_admin_username.txt') or 'admin'
         self.password = read_secret(self.secrets, 'homehub_admin_password.txt')
         self.required = bool(self.password)
