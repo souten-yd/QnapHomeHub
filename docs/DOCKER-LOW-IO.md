@@ -51,6 +51,19 @@ reports denied accesses; do not alter system permissions.
 - `homehub` Web debug history stays in RAM except warnings/errors and rare
   service lifecycle notices. The 15-second report is *not saved to NAS HDD*.
 
+## Existing Docker Web updater with Matter/Alexa stopped
+
+HomeHub's existing updater will now detect an intentionally stopped
+`qnaphomehub-matterbridge` container and **skip downloading, checking or
+recreating it**. A HomeHub release update recreates `radio` and `homehub`,
+but not unused Matterbridge. Rollback follows the same active-service set.
+An explicitly requested Matterbridge update fails without starting it
+if its service is stopped. This also reduces unnecessary GHCR pulls.
+
+Running Web + radio + updater without Matterbridge is a supported
+low-overhead setup; turn off automatic release updates if a stable
+always-on device collection period must not be interrupted.
+
 ## Deployment caveat
 
 Replacing a Docker image does **not** automatically apply updated `compose.yaml`.
