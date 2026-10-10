@@ -1,0 +1,1 @@
+# QDK standard install/start/stop hooks. Never modify QTS Bluetooth or Docker from QPKG hooks.
