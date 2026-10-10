@@ -264,6 +264,14 @@ class Handler(BaseHTTPRequestHandler):
         a = self.app
         if route == '/api/radio' and method == 'GET':
             return self.send_json(200, radio_request(a.radio))
+        if route == '/api/migration/status' and method == 'GET':
+            # Read-only check. Requires existing HomeHub session, never changes Docker.
+            try:
+                import migration
+                return self.send_json(200, migration.check())
+            except (RuntimeError, OSError, ValueError, KeyError) as error:
+                return self.send_json(200, dict(ok=False, error=str(error)[:400],
+                    radio_required=True, needs_manual_review=True))
         if route == '/api/config':
             if method == 'GET':
                 with a.lock:
