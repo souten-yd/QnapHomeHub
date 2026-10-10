@@ -1,5 +1,10 @@
 # QnapHomeHub
 
+> **0.3.15: Docker版に一本化しました。** Native QPKG（0.3.15-qpkg-preview.1）は開発中止です。QTS App Centerから**QnapHomeHub** QPKGだけを停止・削除し、同じWebポート8787を使うDocker版に戻してください。**QnapSelfCare QPKGや健康記録、HomeHubの `data/`・`secrets/` は削除しません。**
+>
+> Bluetooth radioの無駄なディスク書き込みを削減するため、Docker radioログを無効化し、BlueZの一時D-BusファイルをRAMへ移動しました。管理画面の **「15秒テストしてログ生成」** からHDD別Write IOPSとradio状態をコピー・TXT出力できます。改善効果とホスト`bluetoothd`の原因帰属は実機測定待ちです。[Docker版低ディスクI/O手順](docs/DOCKER-LOW-IO.md)。
+
+
 QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web UIとMatter/Alexaの両方から操作するDockerプロジェクトです。
 
 主対象は **QNAP TS-253Be / x86_64 + USB Bluetoothドングル + Container Station** です。

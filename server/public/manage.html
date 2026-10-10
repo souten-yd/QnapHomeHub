@@ -59,6 +59,17 @@
       <section class="card"><div class="sectionHead"><div><div class="sectionLabel">DEVICES</div><h2>登録済み</h2></div></div><div id="registered" class="grid empty">登録デバイスなし</div></section>
       <section class="card hero accentCard"><div><div class="sectionLabel">MATTER BRIDGE</div><h2>2. Alexa / Matter</h2><p>登録後、MatterbridgeからAlexaペアリングQR、Fabric、Matter設定を管理します。</p></div><a id="matterLink" class="button" target="_blank" rel="noreferrer">Matter設定を開く</a></section>
 
+      <section class="card">
+        <div class="sectionHead"><div><div class="sectionLabel">DISK I/O DIAGNOSTICS</div><h2>Bluetooth / ディスクI/O診断</h2><p>15秒間の物理HDD書き込みと共有radioの状態を測定します。診断中のBluetooth操作やNASへのログ保存は行いません。</p></div><span id="ioDiagBadge" class="pill">手動実行</span></div>
+        <div class="actions">
+          <button type="button" id="ioDiagRun">15秒テストしてログ生成</button>
+          <button type="button" id="ioDiagCopy" class="secondary" disabled>ログをコピー</button>
+          <button type="button" id="ioDiagDownload" class="secondary" disabled>TXT保存</button>
+        </div>
+        <p id="ioDiagMessage" class="meta">押した時だけ測定します。結果のコピーをこのチャットに貼ってください。</p>
+        <pre id="ioDiagResult" class="hidden" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto"></pre>
+      </section>
+
       <details class="card debugCard" id="debugPanel">
         <summary><span><span class="sectionLabel">LIVE TRACE</span><strong>Webデバッグ</strong></span><span id="debugBadge" class="pill">未確認</span></summary>
         <div class="detailsBody">

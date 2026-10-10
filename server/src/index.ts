@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { AuthManager } from './auth.js';
 import { ConfigStore, readSecret } from './config.js';
 import { DebugEventStore } from './debug-events.js';
+import { DiskSampler } from './disk-io-diagnostics.js';
 import { uniqueDeviceName } from './device-names.js';
 import { diagnostics } from './diagnostics.js';
 import { SwitchBotManager } from './switchbot-manager.js';
@@ -20,6 +21,7 @@ const appVersion = process.env.HOMEHUB_VERSION ?? '0.1.0';
 const updaterUrl = process.env.HOMEHUB_UPDATER_URL ?? 'http://127.0.0.1:8788';
 const store = new ConfigStore(dataDir);
 const debug = new DebugEventStore();
+const diskSampler = new DiskSampler();
 await store.load();
 
 const [adminUsernameRaw, adminPassword, switchbotToken, switchbotSecret, internalToken, botPasswordsRaw] = await Promise.all([
@@ -336,6 +338,18 @@ app.post('/api/devices/:id/:action', async (req, res) => {
   } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 app.get('/api/diagnostics', async (_req, res) => res.json(await diagnostics()));
+app.post('/api/diagnostics/io', async (_req, res) => {
+  try {
+    const report = await diskSampler.run({
+      version: appVersion,
+      radio: async () => switchbot instanceof RadioClientManager ? await switchbot.status() : { shared: false },
+      events: () => debug.list(40),
+    });
+    res.json(report);
+  } catch (error) {
+    res.status(503).json({ error: 'I/O sampling unavailable: ' + (error as Error).message.slice(0, 160) });
+  }
+});
 app.get('/api/debug/status', async (req, res) => {
   const limit = Math.min(250, Math.max(10, Number(req.query.limit) || 120));
   const config = store.get();

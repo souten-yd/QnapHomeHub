@@ -139,6 +139,14 @@ async function imageRefId(ref) {
   return command(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref]);
 }
 
+async function matterbridgeActive() {
+  try {
+    return (await command(['docker', 'inspect', '--format', '{{.State.Running}}', 'qnaphomehub-matterbridge'])) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 async function containerImageVersion(container) {
   try {
     return normalizeVersion(await command(['docker', 'inspect', '--format', '{{ index .Config.Labels "org.opencontainers.image.version" }}', container]));
@@ -153,7 +161,10 @@ async function imageVersion(ref) {
 
 async function homeHubServices() {
   const services = await command(['docker', 'compose', '-p', composeProject, '--project-directory', projectDir, '-f', path.join(projectDir, 'compose.yaml'), 'config', '--services']);
-  return services.split(/\s+/).includes('radio') ? ['radio', 'homehub', 'matterbridge'] : ['homehub', 'matterbridge'];
+  const configured = services.split(/\s+/);
+  const runningMatterbridge = await matterbridgeActive();
+  return ['radio', 'homehub', ...(runningMatterbridge ? ['matterbridge'] : [])]
+    .filter(name => configured.includes(name));
 }
 
 async function composeUp(services) {
@@ -168,9 +179,13 @@ async function composeUp(services) {
 async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs = 120000 } = {}) {
   const deadline = Date.now() + timeoutMs;
   let last = 'waiting';
+  // Preserve intentionally stopped Matterbridge for users only needing SwitchBot/SelfCare.
+  const requireMatterbridge = !requireHomeHub || await matterbridgeActive();
   while (Date.now() < deadline) {
     try {
-      const matter = await fetch('http://127.0.0.1:8283/health', { signal: AbortSignal.timeout(2500) });
+      const matter = requireMatterbridge
+        ? await fetch('http://127.0.0.1:8283/health', { signal: AbortSignal.timeout(2500) })
+        : { ok: true, status: 200 };
       if (!requireHomeHub) {
         if (matter.ok) return;
         last = `matter=${matter.status}`;
@@ -217,6 +232,11 @@ async function checkTestedMatterbridge() {
   matter.phase = 'checking';
   matter.lastError = null;
   try {
+    if (!await matterbridgeActive()) {
+      Object.assign(matter, { phase: 'disabled', updateAvailable: false, lastError: null,
+        lastCheckedAt: new Date().toISOString() });
+      return;
+    }
     await command(['docker', 'pull', testedMatterbridgeRef]);
     const [currentImageId, testedImageId, currentMatterVersion, testedVersion] = await Promise.all([
       imageId('qnaphomehub-matterbridge'),
@@ -272,18 +292,20 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     state.phase = 'preparing'; state.lastError = null;
     await saveJson(stateFile, state);
     oldServer = await imageId('qnaphomehub');
-    oldMatter = await imageId('qnaphomehub-matterbridge');
-    log(`Starting ${automatic ? 'automatic' : 'manual'} QnapHomeHub update to ${tag}`, { oldServer, oldMatter });
+    // Stopped Matterbridge must not be downloaded, recreated, or started.
+    const useMatterbridge = await matterbridgeActive();
+    oldMatter = useMatterbridge ? await imageId('qnaphomehub-matterbridge') : undefined;
+    log(`Starting ${automatic ? 'automatic' : 'manual'} QnapHomeHub update to ${tag}`, { oldServer, matterbridgeEnabled: useMatterbridge });
 
     state.phase = 'pulling'; await saveJson(stateFile, state);
     const serverRelease = `${image}:server-${tag}`;
     const matterRelease = `${image}:matterbridge-${tag}`;
     const updaterRelease = `${image}:updater-${tag}`;
     await command(['docker', 'pull', serverRelease]);
-    await command(['docker', 'pull', matterRelease]);
+    if (oldMatter) await command(['docker', 'pull', matterRelease]);
     await command(['docker', 'pull', updaterRelease]).catch(error => log('Updater image is not available for this release; keeping current updater', error.message));
     await command(['docker', 'tag', serverRelease, `${image}:server`]);
-    await command(['docker', 'tag', matterRelease, `${image}:matterbridge`]);
+    if (oldMatter) await command(['docker', 'tag', matterRelease, `${image}:matterbridge`]);
     await command(['docker', 'image', 'inspect', updaterRelease]).then(() => command(['docker', 'tag', updaterRelease, `${image}:updater`])).catch(() => undefined);
 
     state.phase = 'recreating'; await saveJson(stateFile, state);
@@ -297,11 +319,16 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     state.updateAvailable = false;
     state.lastAppliedAt = new Date().toISOString();
     state.lastError = null;
-    state.matterbridge.currentVersion = await containerImageVersion('qnaphomehub-matterbridge');
-    state.matterbridge.currentImageId = await imageId('qnaphomehub-matterbridge');
-    state.matterbridge.updateAvailable = state.matterbridge.testedImageId
-      ? state.matterbridge.currentImageId !== state.matterbridge.testedImageId
-      : false;
+    if (oldMatter) {
+      state.matterbridge.currentVersion = await containerImageVersion('qnaphomehub-matterbridge');
+      state.matterbridge.currentImageId = await imageId('qnaphomehub-matterbridge');
+      state.matterbridge.updateAvailable = state.matterbridge.testedImageId
+        ? state.matterbridge.currentImageId !== state.matterbridge.testedImageId
+        : false;
+    } else {
+      state.matterbridge.phase = 'disabled';
+      state.matterbridge.updateAvailable = false;
+    }
     await saveJson(stateFile, state);
     log(`QnapHomeHub update to ${tag} completed`);
   } catch (error) {
@@ -311,7 +338,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     try {
       if (oldServer) await command(['docker', 'tag', oldServer, `${image}:server`]);
       if (oldMatter) await command(['docker', 'tag', oldMatter, `${image}:matterbridge`]);
-      if (oldServer && oldMatter) {
+      if (oldServer) {
         await composeUp(await homeHubServices());
         await waitForHealthy(null, { timeoutMs: 90000 });
       }
@@ -334,6 +361,9 @@ async function applyTestedMatterbridge(automatic = false) {
   const matter = state.matterbridge;
   let oldMatter;
   try {
+    if (!await matterbridgeActive()) {
+      throw new Error('Matterbridge is stopped; no update or restart was performed');
+    }
     matter.phase = 'preparing'; matter.lastError = null;
     await saveJson(stateFile, state);
     oldMatter = await imageId('qnaphomehub-matterbridge');
