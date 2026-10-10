@@ -7,6 +7,10 @@ services:
     container_name: qnaphomehub
     network_mode: host
     restart: unless-stopped
+    # Docker stdout/stderr are not written to persistent RAID disks by default.
+    # HomeHub's Web debug ring remains available in RAM.
+    logging:
+      driver: "none"
     environment:
       PORT: "8787"
       DATA_DIR: /data
@@ -39,9 +43,18 @@ services:
     restart: unless-stopped
     privileged: true
     stop_grace_period: 15s
+    logging:
+      driver: "none"
+    # Private D-Bus and Python runtime scratch are memory only.
+    # IMPORTANT: persistent /var/lib/bluetooth bonding keys remain on disk.
+    tmpfs:
+      - /run/dbus:rw,nosuid,nodev,noexec,size=4m
+      - /tmp:rw,nosuid,nodev,size=32m
     command: ["node", "dist/radio-main.js"]
     environment:
       HOMEHUB_RADIO_SERVICE: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEHUB_RADIO_LOG_LEVEL: "warn"
       SWITCHBOT_TOKEN_FILE: /run/secrets/switchbot_token
       SWITCHBOT_SECRET_FILE: /run/secrets/switchbot_secret
     volumes:
@@ -53,6 +66,9 @@ services:
       - switchbot_secret
 
   matterbridge:
+    # No Matter/Alexa needed for SwitchBot Web + SelfCare. Opt in explicitly:
+    # docker compose --profile matter up -d matterbridge
+    profiles: ["matter"]
     image: ghcr.io/souten-yd/qnaphomehub:matterbridge
     build:
       context: .
@@ -84,10 +100,14 @@ services:
     restart: unless-stopped
     depends_on:
       - homehub
-      - matterbridge
+    logging:
+      driver: "none"
     environment:
       UPDATER_BIND: 127.0.0.1
       UPDATER_PORT: "8788"
+      # If Matter/Alexa is wanted later, explicitly opt back in.
+      HOMEHUB_MATTER_ENABLED: "0"
+      UPDATE_CHECK_INTERVAL_MS: "86400000"
       DATA_DIR: /data
       PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
       QNAP_HOMEHUB_PROJECT_DIR: ${QNAP_HOMEHUB_PROJECT_DIR:-/share/Container/QnapHomeHub}
