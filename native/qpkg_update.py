@@ -219,6 +219,9 @@ class Updater:
         self.last_error = None
         self._stop = threading.Event()
         self._scheduler = None
+        self._config_cache = read_json(self.config_file)
+        self._support_check_at = 0.0
+        self._support_error = "Not checked"
         self._next_auto_check = time.monotonic() + 24 * 60 * 60
 
     def _state(self):
@@ -233,14 +236,19 @@ class Updater:
         return self._state()
 
     def _config(self):
-        return read_json(self.config_file)
+        return self._config_cache
 
     def _supported(self):
-        try:
-            self.nas_check(self.install_root, self.current)
-            return None
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            return str(exc)
+        # Avoid spawning /sbin/getcfg and reading QTS config every 5-second UI poll.
+        now = time.monotonic()
+        if now - self._support_check_at > 60 or not self._support_check_at:
+            try:
+                self.nas_check(self.install_root, self.current)
+                self._support_error = None
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                self._support_error = str(exc)
+            self._support_check_at = now
+        return self._support_error
 
     def status(self):
         with self.mutex:
@@ -253,6 +261,7 @@ class Updater:
             interrupted = state.get("phase") in PHASES and not busy
             phase = "error" if interrupted else state.get("phase", "idle")
             latest = self.latest
+            unsupported = self._supported()
             return {
                 "currentVersion": self.current, "latestVersion": latest["version"] if latest else None,
                 "latestTag": latest["tag"] if latest else None,
@@ -260,10 +269,11 @@ class Updater:
                 "phase": phase, "busy": busy,
                 "updateAvailable": bool(latest and version_parts(latest["version"]) > version_parts(self.current)),
                 "autoUpdate": self._config().get("autoUpdate") is True,
-                "lastError": (state.get("message") if interrupted else self.last_error or
-                              state.get("message") if phase == "error" else self.last_error),
-                "supported": self._supported() is None,
-                "unsupportedReason": self._supported(),
+                "lastError": (state.get("message", "QPKG update process was interrupted")
+                              if interrupted else
+                              (state.get("message") if phase == "error" else self.last_error)),
+                "supported": unsupported is None,
+                "unsupportedReason": unsupported,
                 "matterbridge": {"phase": "disabled", "updateAvailable": False},
             }
 
@@ -285,6 +295,7 @@ class Updater:
             current = self._config().get("autoUpdate") is True
             if current != new_value["autoUpdate"]:
                 atomic_json(self.config_file, {"autoUpdate": new_value["autoUpdate"]})
+                self._config_cache = {"autoUpdate": new_value["autoUpdate"]}
                 if new_value["autoUpdate"]:
                     self._next_auto_check = time.monotonic()
             return self.status()
@@ -340,7 +351,7 @@ class Updater:
 
     def _schedule(self):
         while not self._stop.wait(60):
-            if not self._config().get("autoUpdate"):
+            if self._config().get("autoUpdate") is not True:
                 continue
             if time.monotonic() < self._next_auto_check:
                 continue
@@ -411,8 +422,7 @@ def run_worker(job, lock_fd):
         backup_dir = job / "backup"
         backup_dir.mkdir(mode=0o700)
         settings = Path(request["data_root"]) / "homehub/settings.json"
-        secrets = Path(request["data_root"]) / "does-not-contain-secrets"
-        # Secrets are outside /data; use current QnapHomeHub deployment directory.
+        # Secrets are outside /data; use existing QnapHomeHub deployment root.
         secrets = Path(request["data_root"]).parent / "secrets"
         if not settings.is_file() or not (secrets / "homehub_admin_password.txt").is_file():
             raise UpdateError("HomeHub settings/credentials missing; aborting update")
