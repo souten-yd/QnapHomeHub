@@ -110,3 +110,16 @@ QNAP起動直後はUSB HCIのカーネル初期化とContainer Stationのradio�
 
 ### HomeHub 0.3.13: 自動HCIリセット停止
 HBF-228Tの接続タイムアウトだけではHCI/BlueZを再起動しません。接続失敗は `radio_failure_category` と `automatic_hci_reset: false` に記録します。起動時のHCI readiness確認・watcher維持・通常のradio排他は維持します。v0.3.12の自動復旧説明は履歴であり、0.3.13では無効です。
+
+ 
+### Host BlueZ 静音性検証（0.3.14・実験モード）
+
+通常運用は専用 BlueZ のままです。NAS 実機でホスト D-Bus/BlueZ による Bluetooth 通信を検証する場合のみ、以下を実行します。
+
+1. **現状の測定値と設定を記録**し、測定・ペアリング処理がない時間に開始。ホストの `/run/dbus/system_bus_socket` が存在することを確認します（存在しない場合は試しません）。
+2. **SelfCare の自動同期を一時停止**し、QNAP でQTSホスト BlueZ が認識する機器を確認。HomeHubコンテナのBlueZペアリングとは記録先が異なるため、切替直後の認証が失敗する可能性があります。既存のペアリング情報は削除しません。
+3. リポジトリのルートから `docker compose -f compose.yaml -f compose.host-bluez.yaml up -d --no-deps --force-recreate radio` を実行します。radio の `/health` に `bluezMode: "host"` が表示されることを確認します。
+4. Bluetooth広告待ち受けが復帰するか、手動接続が成功するか、そして sda/sdb の Write IOPS・Busy率を比較します。**このモードはraw HCIを使うSwitchBot操作には非対応**です。
+5. 戻す場合は `docker compose -f compose.yaml up -d --no-deps --force-recreate radio`。radio health の `bluezMode: "private"` を確認してください。ホスト BlueZやペアリング領域を手動で削除・停止しないでください。
+
+この検証モードは静音化を保証するものではありません。ホストQTSの BlueZ が D-Bus 経由で操作可能か・接続情報が共有されるかは実機次第です。切替結果を確認するまでは既定の本番方式を変更しません。

@@ -40,6 +40,7 @@ export class SharedRadioManager {
   private sequence = 0;
   private bluezError?: string;
   readonly arbiter: RadioArbiter;
+  private readonly hostBlueZ = process.env.HOMEHUB_BLUEZ_MODE === 'host';
 
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
     private readonly secret: string, private readonly debug?: Debug) {
@@ -79,6 +80,7 @@ export class SharedRadioManager {
   }
   private async stopBlueZ(): Promise<void> {
     await this.stopWatcher();
+    if (this.hostBlueZ) return; // Never stop QTS-managed BlueZ.
     await stopProcess(this.bluez);
     this.bluez = undefined;
   }
@@ -154,6 +156,7 @@ export class SharedRadioManager {
   }
 
   private async callRaw<T>(request: any): Promise<T> {
+    if (this.hostBlueZ) throw new Error('Raw HCI operations are disabled in experimental host BlueZ mode to avoid host daemon contention');
     if (!this.rawWorker || this.rawWorker.exitCode !== null || this.rawWorker.signalCode !== null) {
       const adapter = `hci${this.getConfig().hciDeviceId}`;
       if (!/^hci\d{1,2}$/.test(adapter)) throw new Error('Invalid HCI adapter');
@@ -183,8 +186,14 @@ export class SharedRadioManager {
     while (Date.now() < deadline) {
       try {
         await fs.access(`/sys/class/bluetooth/${adapter}`);
-        await new Promise<void>((resolve, reject) => execFile('/usr/bin/hciconfig', [adapter, 'up'], { timeout: 5000 },
-          error => error ? reject(error) : resolve()));
+        if (!this.hostBlueZ) {
+          await new Promise<void>((resolve, reject) => execFile('/usr/bin/hciconfig', [adapter, 'up'], { timeout: 5000 },
+            error => error ? reject(error) : resolve()));
+        } else {
+          // An opt-in host setup must have an existing QTS D-Bus service.
+          // Probe it read-only; do not power-cycle the host adapter.
+          await fs.access('/run/dbus/system_bus_socket');
+        }
         return;
       } catch (error) {
         lastError = (error as Error).message;
@@ -240,6 +249,7 @@ export class SharedRadioManager {
   }
 
   private async startBlueZ(): Promise<void> {
+    if (this.hostBlueZ) { await this.ensureAdapterReady(); return; }
     if (this.bluez?.pid && this.bluez.exitCode === null && this.bluez.signalCode === null) return;
     await this.ensureAdapterReady();
     const bluez = spawn('/usr/libexec/bluetooth/bluetoothd', ['--nodetach'], { stdio: ['ignore', 'ignore', 'inherit'] });
@@ -285,7 +295,7 @@ export class SharedRadioManager {
     this.socketServer = http.createServer(async (req, res) => {
       const reply = (status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
+        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, bluezMode: this.hostBlueZ ? 'host' : 'private', watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
         if (req.method !== 'POST' || !['/run', '/homehub', '/watch'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }

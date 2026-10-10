@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-if [ "${HOMEHUB_RADIO_SERVICE:-0}" = 1 ]; then
+if [ "${HOMEHUB_RADIO_SERVICE:-0}" = 1 ] && [ "${HOMEHUB_BLUEZ_MODE:-private}" != host ]; then
     mkdir -p /run/dbus
     dbus-daemon --system --fork --nopidfile
 fi
