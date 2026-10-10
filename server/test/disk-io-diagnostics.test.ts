@@ -32,9 +32,9 @@ describe('Low-write radio diagnostics', () => {
     ].join('\n'));
     const values = calculateDiskRates(before, after, 10);
     expect(values.map(x => x.device)).toEqual(['sda', 'sdb']);
-    expect(values[0].writeIops).toBe(4);
-    expect(values[1].writeIops).toBe(4);
-    expect(values[0].writeMBps).toBe(0.061);
+    expect(values[0]!.writeIops).toBe(4);
+    expect(values[1]!.writeIops).toBe(4);
+    expect(values[0]!.writeMBps).toBe(0.061);
   });
 
   it('strips MACs and event details from shareable logs', () => {
