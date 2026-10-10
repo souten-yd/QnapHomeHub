@@ -6,7 +6,9 @@ The existing QnapHomeHub is three/four Docker services: homehub, radio,
 matterbridge and updater. SelfCare QPKG sends watch, pairing and sync
 requests to radio over the existing Unix socket. **This milestone replaces
 only the HomeHub HTTP/Web frontend.** It does *not* remove the radio
-container. Matterbridge and Docker updater are intentionally not started by
+container. **For quiet NAS evaluation the QPKG Web can run even while the
+radio container is stopped**: health will report Bluetooth unavailable and
+all SwitchBot/Omron BLE operations remain disabled until radio is restarted. Matterbridge and Docker updater are intentionally not started by
 the QPKG; QTS must manage the QPKG lifecycle.
 
 The native Python 3.9+ Web/API reuses port 8787 and the existing public UI,
@@ -53,8 +55,10 @@ advertise a working Web QPKG updater until it is implemented and tested.**
 1. Snapshot HomeHub `data/homehub/settings.json`, `secrets/`,
    `data/bluetooth/`, and SelfCare database/key backups. Record Docker
    versions and sda/sdb Write IOPS with idle BLE watch enabled.
-2. Confirm the existing radio socket is accessible as the QPKG account.
-   Confirm working SelfCare watch and a manual Omron synchronization first.
+2. For Bluetooth tests, confirm the shared radio socket is accessible as the
+   QPKG account and verify working SelfCare watch/manual Omron sync first.
+   For disk-silence tests the radio may intentionally be offline; QPKG Web
+   remains available but Bluetooth controls cannot perform commands.
 3. Stop **only the Docker HomeHub Web service** to free TCP 8787. Do **not**
    stop radio or SelfCare. Do not change host bluetoothd, bonding keys,
    USB adapter state, SelfCare sync mode, or HCI ownership.
