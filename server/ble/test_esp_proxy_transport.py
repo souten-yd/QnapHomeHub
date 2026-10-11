@@ -10,6 +10,42 @@ from esp_proxy_transport import ProxyConnection
 
 @unittest.skipUnless(importlib.util.find_spec('bleak_esphome'), 'isolated proxy environment required')
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    def bond_services(self):
+        from aioesphomeapi import UserService, UserServiceArg, UserServiceArgType, SupportsResponseType
+        return [UserService(name='prepare_ble_bond', key=1, supports_response=SupportsResponseType.STATUS,
+                            args=[UserServiceArg(name='address', type=UserServiceArgType.STRING)]),
+                UserService(name='cancel_ble_bond', key=2, supports_response=SupportsResponseType.STATUS)]
+
+    async def test_explicit_bond_ack_and_cleanup_even_when_ack_is_lost(self):
+        from esp_proxy_security import LinkSecurityError
+        for outcome in (SimpleNamespace(success=True), SimpleNamespace(success=False), TimeoutError()):
+            self.api.execute_service = AsyncMock()
+            self.api.execute_service.side_effect = [outcome, SimpleNamespace(success=True)]
+            async with ProxyConnection('proxy.local', 'test') as remote:
+                remote.services = self.bond_services()
+                if isinstance(outcome, TimeoutError):
+                    with self.assertRaises(TimeoutError):
+                        await remote.prepare_bond('AA:BB:CC:11:22:33')
+                elif not outcome.success:
+                    with self.assertRaises(LinkSecurityError):
+                        await remote.prepare_bond('AA:BB:CC:11:22:33')
+                else:
+                    await remote.prepare_bond('AA:BB:CC:11:22:33')
+            calls = self.api.execute_service.await_args_list
+            self.assertEqual([c.args[0].name for c in calls], ['prepare_ble_bond', 'cancel_ble_bond'])
+            self.assertEqual(calls[0].args[1], {'address': 'AA:BB:CC:11:22:33'})
+            self.assertTrue(calls[0].kwargs['return_response'])
+
+    async def test_missing_or_ambiguous_bond_action_fails_before_sending(self):
+        from esp_proxy_security import LinkSecurityError
+        for services in ([], self.bond_services()[:1], self.bond_services() * 2):
+            self.api.execute_service = AsyncMock()
+            async with ProxyConnection('proxy.local', 'test') as remote:
+                remote.services = services
+                with self.assertRaisesRegex(LinkSecurityError, 'firmware_update_required'):
+                    await remote.prepare_bond('AA:BB:CC:11:22:33')
+            self.api.execute_service.assert_not_called()
+
     async def asyncSetUp(self):
         from aioesphomeapi import APIVersion, DeviceInfo
         self.api = Mock()

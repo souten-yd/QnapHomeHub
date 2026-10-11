@@ -26,6 +26,8 @@ class ProxyConnection:
         self.diagnostics = {}
         self.unsub = None
         self.security = None
+        self.services = []
+        self.bond_cancel_service = None
 
     async def __aenter__(self):
         from aioesphomeapi import BluetoothProxyFeature
@@ -108,7 +110,7 @@ class ProxyConnection:
     async def prepare_security(self, trace=None):
         from aioesphomeapi import TextSensorInfo, TextSensorState
         from esp_proxy_security import SessionSecurity
-        entities, _ = await asyncio.wait_for(self.api.list_entities_services(), 10)
+        entities, self.services = await asyncio.wait_for(self.api.list_entities_services(), 10)
         keys = [e.key for e in entities if isinstance(e, TextSensorInfo) and e.name == 'BLE Session']
         if not keys:
             # Released firmware predating the opt-in journal retains its behavior.
@@ -124,6 +126,34 @@ class ProxyConnection:
         self.api.subscribe_states(state)
         await self.security.arm()
         return self.security
+
+    async def prepare_bond(self, address):
+        """Defer candidate firmware's eager encryption for this explicit bond only."""
+        from aioesphomeapi import SupportsResponseType, UserServiceArgType
+        from esp_proxy_security import LinkSecurityError
+        prepare = [s for s in self.services if s.name == 'prepare_ble_bond']
+        cancel = [s for s in self.services if s.name == 'cancel_ble_bond']
+        if (len(prepare) != 1 or len(cancel) != 1 or
+                prepare[0].supports_response != SupportsResponseType.STATUS or
+                cancel[0].supports_response != SupportsResponseType.STATUS or
+                len(prepare[0].args) != 1 or prepare[0].args[0].name != 'address' or
+                prepare[0].args[0].type != UserServiceArgType.STRING or cancel[0].args):
+            raise LinkSecurityError('explicit_bond_firmware_update_required')
+        # Remember cleanup before sending: the action may execute even if its ACK is lost.
+        self.bond_cancel_service = cancel[0]
+        response = await self.api.execute_service(prepare[0], {'address': address},
+                                                  return_response=True, timeout=5)
+        if response is None or response.success is not True:
+            raise LinkSecurityError('explicit_bond_not_prepared')
+
+    async def cancel_bond(self):
+        if self.bond_cancel_service is not None:
+            service, self.bond_cancel_service = self.bond_cancel_service, None
+            # A lost connection also leaves only a 30-second, single-OPEN lease.
+            try:
+                await self.api.execute_service(service, {}, return_response=True, timeout=5)
+            except Exception:
+                pass
 
     async def subscribe_diagnostics(self, callback):
         from aioesphomeapi import (SensorInfo, SensorState, BinarySensorInfo, BinarySensorState,
@@ -150,6 +180,7 @@ class ProxyConnection:
 
     async def close(self):
         try:
+            await self.cancel_bond()
             if self.unsub:
                 self.unsub()
                 self.unsub = None
