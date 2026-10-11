@@ -14,7 +14,8 @@ ARG HOMEHUB_VERSION=0.1.0
 RUN apt-get update && apt-get install -y --no-install-recommends bluetooth bluez libbluetooth3 libudev1 dbus python3 python3-venv && rm -rf /var/lib/apt/lists/*
 RUN python3 -m venv /opt/ble && /opt/ble/bin/pip install --no-cache-dir bleak==0.22.3
 # ESPHome BLE proxy requires Bleak 3.x; do not upgrade the working BlueZ runtime.
-RUN python3 -m venv /opt/ble-proxy && /opt/ble-proxy/bin/pip install --no-cache-dir bleak-esphome==4.1.0
+COPY server/ble/requirements-esphome-proxy.txt /tmp/requirements-esphome-proxy.txt
+RUN python3 -m venv /opt/ble-proxy && /opt/ble-proxy/bin/pip install --no-cache-dir -r /tmp/requirements-esphome-proxy.txt
 WORKDIR /app
 COPY server/package.json ./
 COPY --from=build /app/node_modules ./node_modules
