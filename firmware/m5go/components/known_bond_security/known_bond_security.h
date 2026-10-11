@@ -10,6 +10,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/log.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "controller_status.h"
 
 namespace esphome::known_bond_security {
 
@@ -17,7 +18,9 @@ class KnownBondSecurity : public Component {
  public:
   void set_diagnostic(text_sensor::TextSensor *diagnostic) { diagnostic_ = diagnostic; }
   void set_session_diagnostic(text_sensor::TextSensor *diagnostic) { session_diagnostic_ = diagnostic; }
-  void setup() override { publish_session_(); }
+  void set_controller_diagnostic(text_sensor::TextSensor *diagnostic) { controller_diagnostic_ = diagnostic; }
+  void setup() override { publish_session_(); publish_controller_(); }
+  void loop() override { drain_controller_(); }
 
   // Authenticated Native API action, scoped to one peer and one OPEN attempt.
   // This only defers our eager encryption; explicit proxy pairing still owns SMP.
@@ -41,6 +44,7 @@ class KnownBondSecurity : public Component {
         std::memcmp(peer_, param->ble_security.auth_cmpl.bd_addr, ESP_BD_ADDR_LEN) != 0)
       return;
     const auto &auth = param->ble_security.auth_cmpl;
+    drain_controller_();
     record_(auth.success ? "auth_ok" : "auth_fail",
             {auth.success ? 0 : static_cast<int>(auth.fail_reason), auth.auth_mode, auth.addr_type,
              auth.key_present ? 1 : 0});
@@ -64,6 +68,8 @@ class KnownBondSecurity : public Component {
     }
     if (event == ESP_GATTC_DISCONNECT_EVT && tracking_ &&
         std::memcmp(peer_, param->disconnect.remote_bda, ESP_BD_ADDR_LEN) == 0) {
+      controller_status::end();
+      drain_controller_();
       inspect_bond_("bond_close");
       record_("disconnect", {param->disconnect.reason});
       tracking_ = false;
@@ -72,11 +78,16 @@ class KnownBondSecurity : public Component {
     }
     if (event != ESP_GATTC_OPEN_EVT)
       return;
+    controller_status::end();
     bool explicit_bond = bond_prepared_ && millis() - bond_prepared_at_ < 30000 &&
                          std::memcmp(bond_peer_, param->open.remote_bda, ESP_BD_ADDR_LEN) == 0;
     bond_prepared_ = false;  // Failed/foreign OPEN also consumes the reservation.
     ++sequence_;
     started_ = millis();
+    controller_events_.clear();
+    controller_overflow_ = false;
+    controller_lost_ = controller_status::lost.load(std::memory_order_relaxed);
+    publish_controller_();
     events_.clear();
     overflow_ = false;
     first_write_ = false;
@@ -90,6 +101,8 @@ class KnownBondSecurity : public Component {
     std::memcpy(peer_, param->open.remote_bda, ESP_BD_ADDR_LEN);
     tracking_ = true;
     conn_id_ = param->open.conn_id;
+    if (controller_diagnostic_ != nullptr)
+      controller_status::begin(sequence_);
     // A bond is stored separately from the current connection's encryption.
     // Never start security for an unknown peer or modify/delete stored keys.
     if (inspect_bond_("bond_open") && !explicit_bond) {
@@ -102,6 +115,35 @@ class KnownBondSecurity : public Component {
   }
 
  protected:
+  void drain_controller_() {
+    bool changed = false;
+    controller_status::Event event;
+    while (controller_status::pop(event)) {
+      if (event.sequence != sequence_) continue;  // Never reuse another connection's result.
+      if (controller_events_.size() >= controller_status::CAPACITY) {
+        controller_overflow_ = true;
+      } else {
+        controller_events_.push_back("[" + std::to_string(event.at - started_) + "," +
+                                     std::to_string(event.status) + "," + std::to_string(event.enabled) + "]");
+      }
+      changed = true;
+    }
+    if (!controller_overflow_ && controller_status::lost.load(std::memory_order_relaxed) != controller_lost_) {
+      controller_overflow_ = true;
+      changed = true;
+    }
+    if (changed) publish_controller_();
+  }
+  void publish_controller_() {
+    if (controller_diagnostic_ == nullptr) return;
+    std::string value = "{\"v\":1,\"seq\":" + std::to_string(sequence_) +
+                        ",\"overflow\":" + (controller_overflow_ ? "true" : "false") + ",\"events\":[";
+    for (size_t i = 0; i < controller_events_.size(); ++i) {
+      if (i) value += ",";
+      value += controller_events_[i];
+    }
+    controller_diagnostic_->publish_state(value + "]}");
+  }
   static int hex_(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -172,6 +214,10 @@ class KnownBondSecurity : public Component {
   }
   text_sensor::TextSensor *diagnostic_{nullptr};
   text_sensor::TextSensor *session_diagnostic_{nullptr};
+  text_sensor::TextSensor *controller_diagnostic_{nullptr};
+  std::vector<std::string> controller_events_;
+  uint32_t controller_lost_{0};
+  bool controller_overflow_{false};
   std::vector<std::string> events_;
   uint32_t sequence_{0}, started_{0};
   uint16_t conn_id_{0};

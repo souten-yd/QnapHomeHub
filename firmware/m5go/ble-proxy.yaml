@@ -24,6 +24,8 @@ known_bond_security:
     name: BLE Security
   session_diagnostic:
     name: BLE Session
+  controller_diagnostic:
+    name: BLE Controller
 
 wifi:
   ssid: !secret wifi_ssid

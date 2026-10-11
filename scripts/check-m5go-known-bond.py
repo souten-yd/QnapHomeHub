@@ -40,7 +40,7 @@ inline int esp_ble_set_encryption(uint8_t *address,int mode) {
   if (std::memcmp(address,saved_address,6) || mode!=ESP_BLE_SEC_ENCRYPT) __builtin_abort();
   ++requests; return request_error;
 }
-namespace esphome { class Component { public: virtual void setup() {} }; inline uint32_t fake_ms=100; inline uint32_t millis() { return fake_ms; } }
+namespace esphome { class Component { public: virtual void setup() {} virtual void loop() {} }; inline uint32_t fake_ms=100; inline uint32_t millis() { return fake_ms; } }
 namespace esphome::text_sensor { class TextSensor {
  public: std::string state; void publish_state(const std::string &value) { state=value; }
 }; }
@@ -55,6 +55,8 @@ int main() {
   component.set_diagnostic(&diagnostic);
   esphome::text_sensor::TextSensor journal;
   component.set_session_diagnostic(&journal);
+  esphome::text_sensor::TextSensor controller;
+  component.set_controller_diagnostic(&controller);
   component.setup(); assert(journal.state.find("\"seq\":0")!=std::string::npos);
   esp_ble_gattc_cb_param_t event{};
   std::memcpy(event.open.remote_bda,saved_address,6);
@@ -75,6 +77,9 @@ int main() {
   // A valid connection to the stored peer makes exactly one encryption request.
   open(); assert(requests==1);
   assert(diagnostic.state=="encryption_requested");
+  esphome::known_bond_security::controller_status::capture(esphome::millis(),6,0);
+  component.loop();
+  assert(controller.state.find("[0,6,0]")!=std::string::npos);
   assert(journal.state.find("bond_open\",0,3,16,0,1,1,1")!=std::string::npos);
   esp_ble_gap_cb_param_t auth{};
   std::memcpy(auth.ble_security.auth_cmpl.bd_addr,saved_address,6);
@@ -116,6 +121,7 @@ int main() {
   assert(journal.state==old);
   open();
   assert(journal.state.find("auth_ok")==std::string::npos);
+  assert(controller.state.find("[0,6,0]")==std::string::npos);
   event.write.conn_id=99;
   component.gattc_event_handler(ESP_GATTC_WRITE_DESCR_EVT,0,&event);
   assert(journal.state.find("cccd")==std::string::npos);
