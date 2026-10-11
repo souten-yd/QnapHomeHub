@@ -10,6 +10,8 @@
 
 追加診断では登録成功後と切断直前の保存bondを確認できた。key mask 3、鍵長16、publicアドレス、IRK/EDIV/RAND非ゼロで、全ゼロIRK説の前提とは一致しない。続く23:04 JSTの通常転送は広告検出後のOPENで133（一般的なGATTエラー）となり、認証へ到達しなかった。認証97の再現でも解消確認でもない。RSSI -84 dBmは観測値として残すが、電波が原因と断定しない。USB経路と自動同期を復帰済み。
 
+その後、QNAPで成功している認証内容を操作履歴・実装から再確認した。22:59:47開始のUSB同期は既存キーの認証`8100`と履歴読取りに成功。M5GO登録と23:04の再接続との間にこのUSB同期が介在していたことを確認した。待機監視の時間切れ復帰によるもので、前回の無介入条件は成立していない。詳細と次回の隔離条件は[M5GO-ACCEPTANCE.md](M5GO-ACCEPTANCE.md)を参照。介入が失敗原因であるとは断定しない。
+
 ## 公式資料
 
 - [OMRON HBF-227T/228T/230T共通取扱説明書](https://store.healthcare.omron.co.jp/support/download/manual/pdf/6602384-7D_HBF-230T-SW.pdf): HBF-228Tを対象に含む。初期登録、通常通信、通信設定の削除は別操作。ボタン表示の確認には使えるが、ESP32向けGATT/SMPの実装仕様ではない。
@@ -34,7 +36,7 @@
 - [ble-scale-sync作者の説明、2026-04](https://www.reddit.com/r/homeassistant/comments/1so93sn/followup_ble_scale_sync_is_now_a_home_assistant/): ESPHome Native APIによるGATT transportは技術的に可能という説明。Omron対応の質問があるが、この投稿にHBF-228T+ESPHomeの成功証拠はない。
 - `HBF-228T ESP32`、`HBF-228T pairing`、`Omron proxy site:reddit.com`等も検索した。今回確認した資料からは、初代M5GO+HBF-228Tの通常再接続成功例は見つからなかった。「存在しない」とは断定しない。
 
-## ローカルコードとの照合
+## 調査開始時のローカルコードとの照合（v0.3.24）
 
 - `known_bond_security.h`は保存bondに一致した相手へ暗号化開始を要求するが、成功通知を履歴ワーカーの実行条件にはしていない。
 - `esp_proxy_worker.py`の通常同期はGATT接続→`Session.subscribe()`→`sync_session()`。`Session.subscribe()`の待機は固定時間であり、対象接続のGAP認証完了を待つ条件ではない。したがって、開始要求を受け付けたことと暗号化完了を分ける必要がある。ただし、この不足が今回の97を生むと確定したわけではない。
