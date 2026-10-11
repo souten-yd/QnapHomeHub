@@ -54,6 +54,22 @@
         </div>
       </section>
 
+      <section class="card" id="radioControlPanel">
+        <div class="sectionHead"><div><div class="sectionLabel">RADIO CONTROL · LOW DISK I/O</div><h2>Bluetooth radio 管理</h2><p>HomeHubのradioコンテナだけを制御します。停止中はSwitchBot操作とSelfCareの機器同期を利用できません。測定履歴やペアリング情報は削除しません。</p></div><span id="radioControlBadge" class="pill">状態確認中</span></div>
+        <div class="debugStatusGrid">
+          <div class="miniCard"><span>RADIO</span><strong id="radioControlState">-</strong></div>
+          <div class="miniCard"><span>DOCKER LOG</span><strong id="radioControlLogging">-</strong></div>
+          <div class="miniCard"><span>D-BUS / TMP</span><strong id="radioControlTmpfs">-</strong></div>
+        </div>
+        <div class="actions">
+          <button type="button" id="radioControlRefresh" class="secondary">状態を確認</button>
+          <button type="button" id="radioControlStop" class="secondary" disabled>radioを停止</button>
+          <button type="button" id="radioControlStart" class="secondary" disabled>既存構成で起動</button>
+          <button type="button" id="radioControlLowIo" disabled>省書き込み起動</button>
+        </div>
+        <p id="radioControlMessage" class="meta" role="status">状態を確認してください。省書き込み起動はradioのみを再作成し、一時的にBluetooth同期を中断します。Docker版更新サービスの新バージョンが必要です。</p>
+      </section>
+
       <section class="card hero accentCard"><div><div class="sectionLabel">BLE GATEWAY</div><h2>1. Bluetooth</h2><p>USBドングルからSwitchBotを探します。共通radioサービス利用時はSelfCareと順番に操作します。</p><p id="radioStatus">Bluetooth管理状態を確認中</p></div><button id="scan">Bluetoothをスキャン</button></section>
       <section class="card"><div class="sectionHead"><div><div class="sectionLabel">DISCOVERY</div><h2>検出したデバイス</h2></div></div><div id="discovered" class="grid empty">まだスキャンしていません。</div></section>
       <section class="card"><div class="sectionHead"><div><div class="sectionLabel">DEVICES</div><h2>登録済み</h2></div></div><div id="registered" class="grid empty">登録デバイスなし</div></section>

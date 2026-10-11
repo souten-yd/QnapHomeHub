@@ -1,0 +1,12 @@
+# Built into the updater image; read-only overlay used only on explicit Web selection.
+# Does not mount /var/lib/bluetooth on tmpfs: pairing keys must remain persistent.
+services:
+  radio:
+    logging:
+      driver: "none"
+    tmpfs:
+      - /run/dbus:rw,nosuid,nodev,noexec,size=4m
+      - /tmp:rw,nosuid,nodev,size=16m
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOMEHUB_RADIO_LOG_LEVEL: "warn"

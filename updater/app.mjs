@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { createRadioControl } from './radio-control.mjs';
 
 const bind = process.env.UPDATER_BIND || '127.0.0.1';
 const port = Number(process.env.UPDATER_PORT || '8788');
@@ -14,6 +15,8 @@ const checkIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.UPDATE_CHECK
 const configFile = path.join(dataDir, 'config.json');
 const stateFile = path.join(dataDir, 'state.json');
 const testedMatterbridgeRef = `${image}:matterbridge-tested`;
+const radioControl = createRadioControl({ command: silentDockerCommand, projectDir, composeProject,
+  overlay: '/app/compose.radio-low-io.yaml' });
 
 async function readSecret(name) {
   const file = process.env[`${name}_FILE`];
@@ -110,6 +113,34 @@ async function command(args, options = {}) {
   });
 }
 
+// Radio status must NEVER stream Docker inspect JSON (which can contain
+// credentials/environment) into the updater's persistent stdout log.
+async function silentDockerCommand(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(args[0], args.slice(1), {
+      env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = ''; let stderr = '';
+    let exceeded = false;
+    const timer = setTimeout(() => child.kill('SIGKILL'), 105000);
+    child.stdout?.on('data', chunk => {
+      stdout += chunk.toString();
+      if (stdout.length > 1024 * 1024) { exceeded = true; child.kill('SIGKILL'); }
+    });
+    child.stderr?.on('data', chunk => {
+      stderr += chunk.toString();
+      if (stderr.length > 64 * 1024) { exceeded = true; child.kill('SIGKILL'); }
+    });
+    child.on('error', error => { clearTimeout(timer); reject(new Error(error.message)); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0 && !exceeded) resolve(stdout.trim());
+      else reject(new Error('Docker radio operation failed (' +
+        (exceeded ? 'output-limit' : 'exit=' + code) + ')'));
+    });
+  });
+}
+
 async function currentVersion() {
   try {
     const response = await fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(2000) });
@@ -159,20 +190,30 @@ async function imageVersion(ref) {
   } catch { return null; }
 }
 
+async function radioActive() {
+  try {
+    return (await radioControl.status()).running;
+  } catch { return false; }
+}
+
 async function homeHubServices() {
   const services = await command(['docker', 'compose', '-p', composeProject, '--project-directory', projectDir, '-f', path.join(projectDir, 'compose.yaml'), 'config', '--services']);
   const configured = services.split(/\s+/);
-  const runningMatterbridge = await matterbridgeActive();
-  return ['radio', 'homehub', ...(runningMatterbridge ? ['matterbridge'] : [])]
+  const [runningRadio, runningMatterbridge] = await Promise.all([radioActive(), matterbridgeActive()]);
+  return [...(runningRadio ? ['radio'] : []), 'homehub',
+    ...(runningMatterbridge ? ['matterbridge'] : [])]
     .filter(name => configured.includes(name));
 }
 
 async function composeUp(services) {
+  const wantsRadio = services.includes('radio');
+  const preserveLowIo = wantsRadio && (await radioControl.status()).lowIo;
   await command([
     'docker', 'compose', '-p', composeProject,
     '--project-directory', projectDir,
     '-f', path.join(projectDir, 'compose.yaml'),
-    'up', '-d', '--force-recreate', ...services,
+    ...(preserveLowIo ? ['-f', '/app/compose.radio-low-io.yaml'] : []),
+    'up', '-d', '--force-recreate', '--no-deps', ...services,
   ]);
 }
 
@@ -180,7 +221,10 @@ async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs 
   const deadline = Date.now() + timeoutMs;
   let last = 'waiting';
   // Preserve intentionally stopped Matterbridge for users only needing SwitchBot/SelfCare.
-  const requireMatterbridge = !requireHomeHub || await matterbridgeActive();
+  const [requireMatterbridge, requireRadio] = await Promise.all([
+    !requireHomeHub ? Promise.resolve(true) : matterbridgeActive(),
+    radioActive(),
+  ]);
   while (Date.now() < deadline) {
     try {
       const matter = requireMatterbridge
@@ -192,7 +236,7 @@ async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs 
       } else {
         const home = await fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(2500) });
         const homeBody = home.ok ? await home.json() : {};
-        if (home.ok && matter.ok && (!homeBody.radio?.shared || homeBody.radio.available) && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
+        if (home.ok && matter.ok && (!requireRadio || !homeBody.radio?.shared || homeBody.radio.available) && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
         last = `home=${home.status}/${homeBody.version || '-'} matter=${matter.status}`;
       }
     } catch (error) { last = error.message; }
@@ -268,7 +312,7 @@ async function checkTestedMatterbridge() {
 }
 
 async function checkForUpdates({ triggerAuto = true } = {}) {
-  if (busy) return statusPayload();
+  if (busy || radioControl.busy) return statusPayload();
   await Promise.all([checkHomeHubRelease(), checkTestedMatterbridge()]);
   await saveJson(stateFile, state);
 
@@ -283,7 +327,7 @@ async function checkForUpdates({ triggerAuto = true } = {}) {
 }
 
 async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
-  if (busy) return;
+  if (busy || radioControl.busy) return;
   if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error('No valid stable release is selected');
   busy = true;
   const version = normalizeVersion(tag);
@@ -356,7 +400,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
 }
 
 async function applyTestedMatterbridge(automatic = false) {
-  if (busy) return;
+  if (busy || radioControl.busy) return;
   busy = true;
   const matter = state.matterbridge;
   let oldMatter;
@@ -450,6 +494,22 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!authorized(req)) return send(res, 401, { error: 'Unauthorized' });
     if (req.method === 'GET' && req.url === '/status') return send(res, 200, statusPayload());
+    if (req.method === 'GET' && req.url === '/radio/status') return send(res, 200, await radioControl.status());
+    if (req.method === 'POST' && req.url === '/radio/mode') {
+      const body = await readBody(req);
+      if (Object.keys(body).length !== 1 || typeof body.mode !== 'string' ||
+          !['stop', 'start', 'low-io'].includes(body.mode)) {
+        return send(res, 400, { error: 'Only stop, start or low-io radio mode is allowed' });
+      }
+      if (busy || radioControl.busy) return send(res, 409, { error: 'An update or radio operation is in progress' });
+      try {
+        const result = await radioControl.execute(body.mode, { updateBusy: () => busy });
+        log('Explicit Web radio mode changed', { mode: body.mode, running: result.running, lowIo: result.lowIo });
+        return send(res, 200, result);
+      } catch (error) {
+        return send(res, 409, { error: (error instanceof Error ? error.message : 'Radio control failed').slice(0, 220) });
+      }
+    }
     if (req.method === 'POST' && req.url === '/check') return send(res, 200, await checkForUpdates({ triggerAuto: false }));
     if (req.method === 'PATCH' && req.url === '/config') {
       const body = await readBody(req);
@@ -459,7 +519,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, statusPayload());
     }
     if (req.method === 'POST' && req.url === '/apply') {
-      if (busy) return send(res, 409, { error: 'Update already in progress', ...statusPayload() });
+      if (busy || radioControl.busy) return send(res, 409, { error: 'Update or radio action already in progress', ...statusPayload() });
       const body = await readBody(req);
       const tag = body.tag || state.latestTag;
       if (tag === 'matterbridge-tested') {

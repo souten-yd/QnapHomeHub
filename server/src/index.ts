@@ -94,7 +94,7 @@ async function updaterRequest(endpoint: string, init: RequestInit = {}): Promise
       'x-homehub-internal-token': internalToken,
       ...(init.headers ?? {}),
     },
-    signal: AbortSignal.timeout(endpoint === '/status' ? 2500 : 15000),
+    signal: AbortSignal.timeout(endpoint === '/status' ? 2500 : endpoint === '/radio/mode' ? 120000 : 15000),
   });
   const text = await response.text();
   let body: unknown = {};
@@ -220,6 +220,29 @@ app.post('/api/update/apply', async (req, res) => {
   }
 });
 
+// Authenticated browser -> internal-token protected updater -> Docker socket.
+ // No Docker socket or host control is exposed to the HomeHub Web container.
+app.get('/api/radio/control/status', async (_req, res) => {
+  try { res.json(await updaterRequest('/radio/status')); }
+  catch (error) { res.status(503).json({ available: false, error: (error as Error).message.slice(0, 200) }); }
+});
+app.post('/api/radio/control/mode', async (req, res) => {
+  const mode = req.body?.mode;
+  if (typeof mode !== 'string' || !['stop', 'start', 'low-io'].includes(mode) ||
+      Object.keys(req.body ?? {}).length !== 1) {
+    return void res.status(400).json({ error: 'Invalid radio mode' });
+  }
+  try {
+    const result = await updaterRequest('/radio/mode', {
+      method: 'POST', body: JSON.stringify({ mode }),
+    });
+    debug.add('warn', 'radio-control', 'Operator changed HomeHub radio mode', { mode });
+    res.json(result);
+  } catch (error) {
+    debug.add('warn', 'radio-control', 'Radio mode request failed', { mode });
+    res.status(503).json({ error: (error as Error).message.slice(0, 200) });
+  }
+});
 app.get('/api/radio', async (_req, res) => {
   if (switchbot instanceof RadioClientManager) {
     try { res.json(await switchbot.status()); } catch (error) { res.status(503).json({ shared: true, error: (error as Error).message }); }
