@@ -29,3 +29,7 @@
 #radioControlPanel .actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 #radioControlPanel .actions button{width:100%;min-width:0;white-space:normal;overflow-wrap:normal;line-height:1.35}
 @media(min-width:960px){#radioControlPanel .actions{grid-template-columns:repeat(4,minmax(0,1fr))}}
+
+#m5goPanel .sectionHead { align-items: flex-start; flex-wrap: wrap; }
+#m5goPanel .sectionHead > div { flex: 1 1 260px; }
+#m5goState { flex-shrink: 0; }

@@ -6,9 +6,9 @@ export class RadioClientManager {
   async initialize(): Promise<void> {}
   async cleanup(): Promise<void> {}
   listDiscovered() { return structuredClone(this.discovered); }
-  private request<T>(payload?: unknown): Promise<T> {
+  private request<T>(payload?: unknown, endpoint?: string): Promise<T> {
     return new Promise((resolve, reject) => {
-      const req = http.request({ socketPath: '/radio/ble.sock', path: payload ? '/homehub' : '/health',
+      const req = http.request({ socketPath: '/radio/ble.sock', path: endpoint ?? (payload ? '/homehub' : '/health'),
         method: payload ? 'POST' : 'GET', headers: { 'content-type': 'application/json' }, timeout: payload ? 240000 : 3000 }, res => {
         let text = '';
         res.setEncoding('utf8');
@@ -24,6 +24,7 @@ export class RadioClientManager {
       req.end(payload ? JSON.stringify(payload) : undefined);
     });
   }
+  proxy(payload: unknown) { return this.request(payload, '/proxy'); }
   status() { return this.request(); }
   async scan(timeoutMs?: number): Promise<DiscoveredDevice[]> {
     this.discovered = await this.request({ action: 'scan', timeoutMs });

@@ -164,6 +164,14 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.writes, [])
         self.assertEqual(self.client.bonds, 0)
 
+    async def test_untargeted_probe_preserves_advertisement_count(self):
+        self.request = {**self.request, 'action': 'probe', 'target': None, 'scan_seconds': 2}
+        self.remote.observations = {ADDRESS: object()}
+        result = await operate(self.request, None, self.remote.factory)
+        self.assertEqual(result['devices_seen'], 1)
+        self.assertEqual(self.client.writes, [])
+        self.assertTrue(self.remote.closed)
+
     async def test_explicit_bond_requires_feature_and_never_programs_omron(self):
         self.request['action'] = 'bond'
         self.remote.pairing_supported = False
