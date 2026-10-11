@@ -16,6 +16,8 @@ v0.3.26と明示登録予約対応firmwareで再評価した。P表示の登録�
 
 実ビルドで使用したESP-IDF 5.5.5ソースも照合した。`btm_sec_encrypt_change`にはHCIのstatus/encr_enableが渡る一方、`smp_enc_cmpl`/`smp_check_auth_req`は暗号化の成否から共通の`SMP_ENC_FAIL`を生成する。`bta_dm_act.c`はSMP失敗時にセキュリティDBの機器エントリーを削除する経路を持つ。観測した認証97とその後のbond数0だけでは、コントローラーが返した詳細な原因コードを復元できない。次は鍵・パケット本文を出力せず、その下位ステータスを記録する方法を用意する。SDK内部フックや詳細ログはまだ適用しておらず、追加の実機接続も行っていない。
 
+続く実装で、詳細ログの全面有効化を使わず、ESP-IDF 5.5.5の暗号化完了関数へ届くstatus/encr_enableだけを固定長キューで観測する候補を用意した。リンク時のラッパーは元関数を必ず1回、元の引数で呼び、制御処理を置き換えない。ネイティブの転送・並行実行試験、実ESP32ビルド、ELFの呼出先照合、暗号化OTA、初期診断の受信まで完了。コントローラー側の実ステータスはまだ未観測。変更はdraft PR #36内の実験firmwareに限り、USB/QNAPの認証やOmronキーには加えていない。
+
 ## 公式資料
 
 - [OMRON HBF-227T/228T/230T共通取扱説明書](https://store.healthcare.omron.co.jp/support/download/manual/pdf/6602384-7D_HBF-230T-SW.pdf): HBF-228Tを対象に含む。初期登録、通常通信、通信設定の削除は別操作。ボタン表示の確認には使えるが、ESP32向けGATT/SMPの実装仕様ではない。
