@@ -89,16 +89,32 @@ export function createRadioControl({ command, projectDir, composeProject = expec
         if (usesHostBluez || (container.Mounts || []).some(x => x.Destination === '/run/dbus')) {
           fail('Host BlueZ mode uses a host D-Bus mount; refusing private low-I/O overlay');
         }
-        // Compose overlay is packaged in this updater image, not written to the NAS.
-        // No dependent containers are created or started.
+        // Compose overlay is packaged in the updater image, NOT written to HDD.
+        // Validate first; don't interrupt SelfCare on invalid Compose or secrets.
         if (!fs.existsSync(baseFile) || !fs.existsSync(overlay)) {
           fail('Compose file or bundled low-I/O overlay missing; no changes made');
         }
-        await command(['docker', 'compose', '-p', composeProject,
-          '--project-directory', projectDir, '-f', baseFile, '-f', overlay,
-          'up', '-d', '--no-deps', '--force-recreate', 'radio']);
+        const composeArgs = ['docker', 'compose', '-p', composeProject,
+          '--project-directory', projectDir, '-f', baseFile, '-f', overlay];
+        await command([...composeArgs, 'config', '--quiet']);
+        // Stop the existing private BlueZ owner FIRST. Setting restart=no
+        // prevents Docker from racing the replacement with an old container.
+        await command(['docker', 'update', '--restart=no', RADIO]);
+        if (container.State?.Running) await command(['docker', 'stop', '-t', '15', RADIO]);
+        const stopped = await inspect();
+        if (stopped.State?.Running) fail('Radio is still running after stop; refusing replacement');
+        // Only after the exclusive owner is confirmed stopped, create one radio.
+        // --no-deps guarantees that HomeHub Web, updater and Matterbridge are untouched.
+        await command([...composeArgs, 'up', '-d', '--no-deps', '--force-recreate', 'radio']);
+        const replacement = await status();
+        if (!replacement.running || !replacement.lowIo) {
+          fail('Recreated radio did not start in low-I/O mode; check Docker radio status');
+        }
       }
-      return { action: mode, ...await status() };
+      const final = await status();
+      if (mode === 'stop' && final.running) fail('Radio did not stop');
+      if (mode === 'start' && !final.running) fail('Radio did not start');
+      return { action: mode, ...final };
     } finally { busy = false; }
   }
   return { status, execute, get busy() { return busy; } };
