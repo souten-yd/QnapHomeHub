@@ -98,6 +98,9 @@ class Remote:
     def client(self, address, adv):
         return self.peripheral
 
+    async def prepare_security(self, trace=None):
+        return None
+
     async def subscribe_diagnostics(self, callback):
         callback({'Free Heap': 50000})
         self.callback(ADDRESS, SimpleNamespace(name='HBF', rssi=-51, manufacturer_data={1: b'\x02'},
@@ -164,6 +167,31 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['gatt_connected'] and result['advertisement_seen'])
         self.assertEqual(result['rssi'], -51)
         self.assertEqual(self.client.writes, [])
+        self.assertEqual(self.client.bonds, 0)
+
+    async def test_link_failure_stops_before_application_key_write(self):
+        from esp_proxy_security import LinkSecurityError
+        from unittest.mock import AsyncMock, Mock
+        for method in ('connected', 'authenticated'):
+            gate = SimpleNamespace(connected=AsyncMock(), authenticated=AsyncMock(), mark=Mock())
+            getattr(gate, method).side_effect = LinkSecurityError('authentication_failed')
+            self.remote.prepare_security = AsyncMock(return_value=gate)
+            with self.assertRaises(LinkSecurityError):
+                await operate(self.request, {}, self.remote.factory)
+            self.assertEqual(self.client.writes, [])
+            self.assertEqual(self.client.bonds, 0)
+            self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_security_gate_precedes_unlock_and_retains_history(self):
+        from unittest.mock import AsyncMock, Mock
+        async def authenticated():
+            self.assertEqual(self.client.writes, [])
+            self.assertEqual(set(self.client.notifications), set(protocol.RX) | {protocol.UNLOCK})
+        gate = SimpleNamespace(connected=AsyncMock(), authenticated=authenticated, mark=Mock())
+        self.remote.prepare_security = AsyncMock(return_value=gate)
+        result = await operate(self.request, {"slots": [], "rx_notifications": 0}, self.remote.factory)
+        self.assertEqual(len(result['records']), 2)
+        gate.connected.assert_awaited_once_with(require_bond=True)
         self.assertEqual(self.client.bonds, 0)
 
     async def test_untargeted_probe_preserves_advertisement_count(self):

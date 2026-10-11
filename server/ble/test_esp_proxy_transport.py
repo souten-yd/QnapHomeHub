@@ -119,3 +119,24 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             state(TextSensorState(key=2, state='authenticated', missing_state=True))
             state(SensorState(key=1, state=float('nan')))
             self.assertEqual(len(updates), count)
+
+    async def test_journal_opt_in_baseline_and_api_disconnect(self):
+        from aioesphomeapi import TextSensorInfo, TextSensorState
+        from test_esp_proxy_security import journal, OPEN, BOND
+        from esp_proxy_security import LinkSecurityError
+        self.api.list_entities_services = AsyncMock(return_value=([TextSensorInfo(key=4, name='BLE Session')], []))
+        self.api.subscribe_states.side_effect = lambda cb: cb(TextSensorState(key=4, state=journal(4)))
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            gate = await remote.prepare_security({})
+            self.assertEqual(gate.baseline, 4)
+            self.api.subscribe_states.call_args.args[0](TextSensorState(key=4, state=journal(5, OPEN, BOND)))
+            waiting = asyncio.create_task(gate.authenticated(1))
+            await asyncio.sleep(0)
+            await remote._on_stop(False)
+            with self.assertRaisesRegex(LinkSecurityError, 'api_disconnected'):
+                await waiting
+        self.api.list_entities_services.return_value = ([], [])
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            trace = {}
+            self.assertIsNone(await remote.prepare_security(trace))
+            self.assertEqual(trace['link_security'], 'journal_unavailable')

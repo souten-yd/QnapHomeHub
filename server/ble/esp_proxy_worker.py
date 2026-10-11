@@ -87,7 +87,10 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
             trace.update(stage='connection', rssi=adv.rssi, connection_timeout_s=20)
         client = remote.client(target, adv)
         try:
+            security = await remote.prepare_security(trace) if action in ('sync', 'bond') else None
             await asyncio.wait_for(client.connect(), 25)
+            if security:
+                await security.connected(require_bond=action == 'sync')
             output.update(gatt_connected=bool(client.is_connected),
                           omron_service_found=client.services.get_service(protocol.SERVICE) is not None)
             if action == 'probe':
@@ -103,15 +106,29 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 # history in pairing mode. A BLE bond alone is not sync acceptance.
                 if trace is not None:
                     trace['stage'] = 'subscribe'
+                if security:
+                    security.mark('notifications_requested')
                 await Session(client, trace).subscribe()
+                if security:
+                    security.mark('notifications_ready')
                 if trace is not None:
                     trace['stage'] = 'bond'
                 await asyncio.wait_for(client.pair(), 30)
+                if security:
+                    await security.authenticated()
                 return {'bonded': True, 'application_key_changed': False}
             if trace is not None:
                 trace['stage'] = 'subscribe'
             session = Session(client, trace)
+            if security:
+                security.mark('notifications_requested')
             await session.subscribe()
+            if security:
+                security.mark('notifications_ready')
+                if trace is not None:
+                    trace['stage'] = 'link_security'
+                await security.authenticated()
+                security.mark('unlock_allowed')
             return await sync_session(session, request, trace)
         finally:
             await asyncio.wait_for(client.disconnect(), 8)
