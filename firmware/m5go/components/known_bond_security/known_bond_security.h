@@ -19,6 +19,23 @@ class KnownBondSecurity : public Component {
   void set_session_diagnostic(text_sensor::TextSensor *diagnostic) { session_diagnostic_ = diagnostic; }
   void setup() override { publish_session_(); }
 
+  // Authenticated Native API action, scoped to one peer and one OPEN attempt.
+  // This only defers our eager encryption; explicit proxy pairing still owns SMP.
+  bool prepare_bond(const std::string &address) {
+    bond_prepared_ = false;
+    if (tracking_ || address.size() != 17) return false;
+    for (size_t i = 0; i < ESP_BD_ADDR_LEN; ++i) {
+      if (i && address[i * 3 - 1] != ':') return false;
+      int hi = hex_(address[i * 3]), lo = hex_(address[i * 3 + 1]);
+      if (hi < 0 || lo < 0) return false;
+      bond_peer_[i] = (hi << 4) | lo;
+    }
+    bond_prepared_at_ = millis();
+    bond_prepared_ = true;
+    return true;
+  }
+  bool cancel_bond() { bond_prepared_ = false; return true; }
+
   void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param) {
     if (event != ESP_GAP_BLE_AUTH_CMPL_EVT || !tracking_ ||
         std::memcmp(peer_, param->ble_security.auth_cmpl.bd_addr, ESP_BD_ADDR_LEN) != 0)
@@ -55,6 +72,9 @@ class KnownBondSecurity : public Component {
     }
     if (event != ESP_GATTC_OPEN_EVT)
       return;
+    bool explicit_bond = bond_prepared_ && millis() - bond_prepared_at_ < 30000 &&
+                         std::memcmp(bond_peer_, param->open.remote_bda, ESP_BD_ADDR_LEN) == 0;
+    bond_prepared_ = false;  // Failed/foreign OPEN also consumes the reservation.
     ++sequence_;
     started_ = millis();
     events_.clear();
@@ -72,7 +92,7 @@ class KnownBondSecurity : public Component {
     conn_id_ = param->open.conn_id;
     // A bond is stored separately from the current connection's encryption.
     // Never start security for an unknown peer or modify/delete stored keys.
-    if (inspect_bond_("bond_open")) {
+    if (inspect_bond_("bond_open") && !explicit_bond) {
       auto error = esp_ble_set_encryption(param->open.remote_bda, ESP_BLE_SEC_ENCRYPT);
       record_("encrypt", {error});
       if (error != ESP_OK)
@@ -82,6 +102,12 @@ class KnownBondSecurity : public Component {
   }
 
  protected:
+  static int hex_(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    return -1;
+  }
   bool inspect_bond_(const char *phase) {
     bool opening = std::strcmp(phase, "bond_open") == 0;
     int count = esp_ble_get_bond_device_num();
@@ -152,6 +178,9 @@ class KnownBondSecurity : public Component {
   bool overflow_{false}, first_write_{false};
   uint8_t peer_[ESP_BD_ADDR_LEN]{};
   bool tracking_{false};
+  bool bond_prepared_{false};
+  uint32_t bond_prepared_at_{0};
+  uint8_t bond_peer_[ESP_BD_ADDR_LEN]{};
   std::string last_security_{"idle"};
 };
 

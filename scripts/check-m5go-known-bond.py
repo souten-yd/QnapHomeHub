@@ -40,7 +40,7 @@ inline int esp_ble_set_encryption(uint8_t *address,int mode) {
   if (std::memcmp(address,saved_address,6) || mode!=ESP_BLE_SEC_ENCRYPT) __builtin_abort();
   ++requests; return request_error;
 }
-namespace esphome { class Component { public: virtual void setup() {} }; inline uint32_t millis() { return 100; } }
+namespace esphome { class Component { public: virtual void setup() {} }; inline uint32_t fake_ms=100; inline uint32_t millis() { return fake_ms; } }
 namespace esphome::text_sensor { class TextSensor {
  public: std::string state; void publish_state(const std::string &value) { state=value; }
 }; }
@@ -127,6 +127,40 @@ int main() {
   for(int i=0;i<30;++i) component.gattc_event_handler(ESP_GATTC_WRITE_DESCR_EVT,0,&event);
   assert(journal.state.find("\"overflow\":true")!=std::string::npos);
   assert(journal.state.size()<3072);
+
+  // Explicit bond defers eager encryption only for a matching, timely OPEN.
+  esphome::known_bond_security::KnownBondSecurity explicit_component;
+  esp_ble_gattc_cb_param_t e{};
+  std::memcpy(e.open.remote_bda,saved_address,6);
+  std::memcpy(e.disconnect.remote_bda,saved_address,6);
+  bond_count=1;request_error=0;
+  auto explicit_open=[&]() { explicit_component.gattc_event_handler(ESP_GATTC_OPEN_EVT,0,&e); };
+  auto close=[&]() { explicit_component.gattc_event_handler(ESP_GATTC_DISCONNECT_EVT,0,&e); };
+  int before=requests;
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  explicit_open();assert(requests==before);
+  assert(!explicit_component.prepare_bond("01:02:03:04:05:06"));
+  close();explicit_open();assert(requests==++before);close();
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  esphome::fake_ms+=30000;
+  explicit_open();assert(requests==++before);close();
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  explicit_component.cancel_bond();explicit_open();assert(requests==++before);close();
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  e.open.status=133;explicit_open();e.open.status=0;
+  explicit_open();assert(requests==++before);close();
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  e.open.remote_bda[0]=7;explicit_open();
+  e.disconnect.remote_bda[0]=7;close();
+  e.open.remote_bda[0]=1;e.disconnect.remote_bda[0]=1;
+  explicit_open();assert(requests==++before);close();
+  for (auto bad : {"", "01:02:03:04:05:0G", "01-02:03:04:05:06", "01:02:03:04:05:06x"}) {
+    assert(!explicit_component.prepare_bond(bad));
+    explicit_open();assert(requests==++before);close();
+  }
+  esphome::fake_ms=0xfffffff0;
+  assert(explicit_component.prepare_bond("01:02:03:04:05:06"));
+  esphome::fake_ms=32;explicit_open();assert(requests==before);close();
 }
 '''
 

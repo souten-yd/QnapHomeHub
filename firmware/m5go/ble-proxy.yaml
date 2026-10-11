@@ -19,6 +19,7 @@ external_components:
 
 # Only peers already bonded through the explicit management action are eligible.
 known_bond_security:
+  id: saved_bond_security
   diagnostic:
     name: BLE Security
   session_diagnostic:
@@ -35,6 +36,19 @@ api:
   reboot_timeout: 0s
   encryption:
     key: !secret api_encryption_key
+  actions:
+    - action: prepare_ble_bond
+      variables:
+        address: string
+      supports_response: status
+      then:
+        - api.respond:
+            success: !lambda return id(saved_bond_security).prepare_bond(address);
+    - action: cancel_ble_bond
+      supports_response: status
+      then:
+        - api.respond:
+            success: !lambda return id(saved_bond_security).cancel_bond();
 
 ota:
   - platform: esphome
