@@ -2,7 +2,7 @@
 
 > **0.3.15: Docker版に一本化しました。** Native QPKG（0.3.15-qpkg-preview.1）は開発中止です。QTS App Centerから**QnapHomeHub** QPKGだけを停止・削除し、同じWebポート8787を使うDocker版に戻してください。**QnapSelfCare QPKGや健康記録、HomeHubの `data/`・`secrets/` は削除しません。**
 >
-> Bluetooth radioの無駄なディスク書き込みを削減するため、Docker radioログを無効化し、BlueZの一時D-BusファイルをRAMへ移動しました。管理画面の **「15秒テストしてログ生成」** からHDD別Write IOPSとradio状態をコピー・TXT出力できます。改善効果とホスト`bluetoothd`の原因帰属は実機測定待ちです。[Docker版低ディスクI/O手順](docs/DOCKER-LOW-IO.md)。
+> Bluetooth radioの無駄なディスク書き込みを削減するため、Docker radioログを無効化し、BlueZの一時D-BusファイルをRAMへ移動しました。管理画面の **「15秒テストしてログ生成」** からHDD別Write IOPSとradio状態をコピー・TXT出力できます。**2026-10-11のQTS 5.x実機ではホスト側`bluetoothd`の競合を特定し、永続起動設定の無効化でNAS再起動後も約83.84→2.53 Write IOPS/HDDを確認**しました。今後の新規セットアップでは必ず[QNAP標準Bluetooth競合の初期確認・対策・ロールバック](docs/QNAP-HOST-BLUEZ-LOW-IO-RUNBOOK.md)を参照してください（QTSの機種差に注意）。[Docker低I/O診断](docs/DOCKER-LOW-IO.md)。
 
 
 QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web UIとMatter/Alexaの両方から操作するDockerプロジェクトです。
