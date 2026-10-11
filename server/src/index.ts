@@ -258,7 +258,7 @@ app.post('/api/m5go', async (req, res) => {
   if (!auth.required) return void res.status(403).json({ error: 'M5GO設定には管理パスワードを設定してください' });
   try {
     const input = req.body;
-    if (!input || !['status', 'config', 'probe', 'bond', 'prepare-bond-session', 'cancel-bond-session'].includes(input.action)) throw new Error('Invalid M5GO action');
+    if (!input || !['status', 'config', 'probe', 'bond', 'prepare-bond-session', 'prepare-application-registration', 'cancel-bond-session'].includes(input.action)) throw new Error('Invalid M5GO action');
     res.json(await switchbot.proxy(input));
   } catch (error) { res.status(400).json({ error: (error as Error).message }); }
 });

@@ -31,6 +31,34 @@ function request(socketPath: string, endpoint: string, payload?: unknown): Promi
 }
 
 describe('M5GO routing and Unix socket contract', () => {
+  it('reports registration separately from history sync and rejects incomplete completion', async () => {
+    const { manager, close } = await setup();
+    let result: any = { registration_only: true, records: [], invalid_records: 0,
+      diagnostic: { stage: 'registration_completed' } };
+    vi.mocked(spawn).mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough() });
+      child.stdin.resume();
+      child.stdin.on('finish', () => { child.stdout.write(JSON.stringify(result)); child.emit('close', 0); });
+      return child as any;
+    });
+    try {
+      await manager.proxyStore.update(settings);
+      const prior = { at: 'previous', success: true, records: 1 };
+      manager.proxyLastSync = prior;
+      const arm = { action: 'proxy-prepare-application-registration', confirm: 'register-existing-key-hbf-228t' };
+      await manager.arbiter.run('selfcare', arm);
+      await expect(manager.arbiter.run('selfcare', sync)).resolves.toEqual(result);
+      expect(manager.proxyStatus().lastRegistration).toMatchObject({ success: true, historyRead: false, applicationKeyValueReused: true });
+      expect(manager.proxyStatus().lastSync).toEqual(prior);
+      result = { records: [], invalid_records: 0 };
+      await manager.arbiter.run('selfcare', arm);
+      await expect(manager.arbiter.run('selfcare', sync)).rejects.toThrow('completion was not confirmed');
+      expect(manager.proxyStatus().lastRegistration.success).toBe(false);
+      expect(manager.proxyStatus().lastSync).toEqual(prior);
+      expect(manager.proxyStatus().bondSession.pending).toBe(false);
+    } finally { vi.mocked(spawn).mockReset(); await close(); }
+  });
+
   it('forwards the existing key only to one armed sync and consumes permission even on worker failure', async () => {
     const { manager, close } = await setup();
     const payloads: any[] = [];
@@ -54,12 +82,19 @@ describe('M5GO routing and Unix socket contract', () => {
       manager.startBlueZ = vi.fn(async () => { throw new Error('USB route'); });
       await expect(manager.arbiter.run('selfcare', { ...sync, device: { model: 'HEM-6232T', address: target } })).rejects.toThrow('USB route');
       expect(manager.proxyStatus().bondSession.pending).toBe(true);
-      const input = { ...sync, key: applicationKey, bond_session: true };
+      const input = { ...sync, key: applicationKey, bond_session: true, application_registration: true };
       await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
       expect(manager.proxyStatus().bondSession.pending).toBe(false);
       await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
       expect(payloads.map(x => x.bond_session)).toEqual([true, false]);
-      expect(payloads.map(x => x.key)).toEqual([applicationKey, applicationKey]);
+      expect(payloads.map(x => x.application_registration)).toEqual([false, false]);
+      await manager.arbiter.run('selfcare', { action: 'proxy-prepare-application-registration', confirm: 'register-existing-key-hbf-228t' });
+      await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
+      await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
+      expect(payloads.map(x => x.application_registration)).toEqual([false, false, true, false]);
+      expect(payloads[2].diagnostic).toBe(true);
+      expect(manager.proxyStatus().lastRegistration.success).toBe(false);
+      expect(payloads.map(x => x.key)).toEqual([applicationKey, applicationKey, applicationKey, applicationKey]);
       expect(JSON.stringify(manager.proxyStatus())).not.toContain(applicationKey);
     } finally { vi.mocked(spawn).mockReset(); await close(); }
   });
@@ -72,6 +107,10 @@ describe('M5GO routing and Unix socket contract', () => {
       await manager.listen(socket);
       await request(socket, '/proxy', { action: 'config', patch: settings });
       expect((await request(socket, '/proxy', { action: 'prepare-bond-session' })).status).toBe(400);
+      expect((await request(socket, '/proxy', { action: 'prepare-application-registration', confirm: 'bond-session-hbf-228t' })).status).toBe(400);
+      const appArm = { action: 'prepare-application-registration', confirm: 'register-existing-key-hbf-228t' };
+      expect((await request(socket, '/proxy', appArm)).body.bondSession.mode).toBe('application');
+      await request(socket, '/proxy', { action: 'cancel-bond-session' });
       const arm = { action: 'prepare-bond-session', confirm: 'bond-session-hbf-228t' };
       const ready = await request(socket, '/proxy', arm);
       expect(ready.body.bondSession.pending).toBe(true);
