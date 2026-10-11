@@ -102,10 +102,10 @@ class ProxyConnection:
     def client(self, address, adv):
         from bleak import BleakClient
         from bleak.backends.device import BLEDevice
-        from bleak_esphome.backend.client import ESPHomeClient
+        from esp_proxy_backend import NotificationESPHomeClient
         device = BLEDevice(address, adv.name, {
             'source': self.data.bluetooth_device.mac_address, 'address_type': adv.address_type})
-        return BleakClient(device, timeout=20, backend=ESPHomeClient, client_data=self.data)
+        return BleakClient(device, timeout=20, backend=NotificationESPHomeClient, client_data=self.data)
 
     async def prepare_security(self, trace=None):
         from aioesphomeapi import TextSensorInfo, TextSensorState
