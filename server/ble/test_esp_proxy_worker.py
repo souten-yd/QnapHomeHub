@@ -31,6 +31,7 @@ class Peripheral:
         self.notifications = {}
         self.fail = None
         self.bonds = 0
+        self.bond_notifications = []
         self.services = SimpleNamespace(get_service=lambda _: True,
                                         get_characteristic=lambda _: SimpleNamespace(properties=['write']))
 
@@ -45,6 +46,7 @@ class Peripheral:
         self.notifications.clear()
 
     async def pair(self):
+        self.bond_notifications.append(set(self.notifications))
         self.bonds += 1
 
     async def start_notify(self, char, callback):
@@ -178,11 +180,24 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'PAIRING'):
             await operate(self.request, None, self.remote.factory)
         self.assertEqual(self.client.bonds, 0)
+        self.assertEqual(self.client.notifications, {})
         self.remote.pairing_supported = True
         result = await operate(self.request, None, self.remote.factory)
         self.assertFalse(result['application_key_changed'])
         self.assertEqual(self.client.bonds, 1)
+        self.assertEqual(self.client.bond_notifications, [set(protocol.RX) | {protocol.UNLOCK}])
         self.assertEqual(self.client.writes, [])
+
+    async def test_explicit_bond_subscription_failure_aborts_without_pairing(self):
+        self.request['action'] = 'bond'
+        self.client.fail = 'notify'
+        trace = {'slots': [], 'rx_notifications': 0}
+        with self.assertRaises(ConnectionError):
+            await operate(self.request, trace, self.remote.factory)
+        self.assertEqual(trace['stage'], 'subscribe')
+        self.assertEqual(self.client.bonds, 0)
+        self.assertEqual(self.client.writes, [])
+        self.assertTrue(self.client.disconnected and self.remote.closed)
 
     async def test_advertisement_contract_and_api_loss(self):
         self.request.update(action='watch', addresses=[ADDRESS])
