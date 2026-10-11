@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Bounded M5GO operations, JSON stdin/stdout. Never programs Omron keys."""
+"""Bounded M5GO operations, JSON stdin/stdout. Application registration requires a separate one-shot reservation."""
 import asyncio
 import base64
 import fcntl
@@ -58,6 +58,9 @@ def validate(request):
         raise ProxyInputError('Unsupported M5GO operation')
     if 'bond_session' in request and (type(request['bond_session']) is not bool or request['action'] != 'sync'):
         raise ProxyInputError('Registration session requires an explicit sync operation')
+    if 'application_registration' in request and (type(request['application_registration']) is not bool or
+            request['action'] != 'sync' or (request['application_registration'] and request.get('bond_session') is not True)):
+        raise ProxyInputError('Application registration requires an explicit bonded sync reservation')
     proxy = request['proxy']
     host = proxy.get('host', '')
     if not isinstance(host, str) or not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,253}', host):
@@ -97,6 +100,7 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
             trace.update(api_connected=True, pairing_supported=pairing, stage='discovery')
         action = request['action']
         bond_session = action == 'sync' and request.get('bond_session') is True
+        application_registration = request.get('application_registration') is True
         explicit_bond = action == 'bond' or bond_session
         target = request.get('target') if action == 'probe' else request['device']['address']
         output = {'schema': 1, 'mode': 'read-only', 'api_connected': True,
@@ -147,12 +151,12 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 if not pairing:
                     raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
                 # Stage HBF authentication notifications before BLE pairing;
-                # add the remaining data channels only after application auth.
+                # application registration instead uses the complete USB subscription order.
                 if trace is not None:
                     trace['stage'] = 'subscribe'
                 if security:
                     security.mark('notifications_requested')
-                session = HbfProxySession(client, trace)
+                session = Session(client, trace) if application_registration else HbfProxySession(client, trace)
                 await session.subscribe()
                 if security:
                     security.mark('notifications_ready')
@@ -161,6 +165,20 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 await asyncio.wait_for(client.pair(), 30)
                 if security:
                     await security.authenticated()
+                if application_registration:
+                    security.mark('registration_allowed')
+                    if trace is not None:
+                        trace['application_registration'] = True
+                    # Use the exact USB HBF registration transaction, with the
+                    # existing request key. No random key, history read or key-write retry.
+                    await session.pair(bytes.fromhex(request['key']), 'HBF-228T')
+                    if trace is not None:
+                        trace.update(stage='registration_completed', application_key_value_reused=True,
+                                     history_read=False)
+                    # SelfCare's sync transport supplies the existing key. Empty
+                    # records preserve its response schema without inventing data.
+                    return {'records': [], 'invalid_records': 0, 'registration_only': True,
+                            'diagnostic': trace}
                 if bond_session:
                     security.mark('unlock_allowed')
                     if trace is not None:

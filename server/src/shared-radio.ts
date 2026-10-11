@@ -35,6 +35,7 @@ export class SharedRadioManager {
   private proxyFailures = 0;
   private proxyDiagnostics: Record<string, unknown> = {};
   private proxyPairingSupported?: boolean;
+  private proxyLastRegistration?: Record<string, unknown>;
   private proxyLastSync?: Record<string, unknown>;
   private rawWorker?: ChildProcess;
   private bluez?: ChildProcess;
@@ -201,7 +202,7 @@ export class SharedRadioManager {
     return { ...publicProxyConfig(this.proxyStore.get()), apiConnected: this.proxyReady,
       error: this.proxyError, pairingSupported: this.proxyPairingSupported,
       advertisement: this.watchSeen.get(this.proxyStore.get().target),
-      diagnostics: this.proxyDiagnostics, lastSync: this.proxyLastSync,
+      diagnostics: this.proxyDiagnostics, lastSync: this.proxyLastSync, lastRegistration: this.proxyLastRegistration,
       bondSession: this.proxyBondSession.status() };
   }
 
@@ -277,10 +278,11 @@ export class SharedRadioManager {
       return this.proxyStatus() as T;
     }
     if (!config.host || !config.noisePsk) throw new Error('M5GO host and API key are required');
-    if (request.action === 'proxy-prepare-bond-session') {
-      if (request.confirm !== 'bond-session-hbf-228t' || config.route !== 'm5go' || !config.target)
+    if (['proxy-prepare-bond-session', 'proxy-prepare-application-registration'].includes(request.action)) {
+      const application = request.action === 'proxy-prepare-application-registration';
+      if (request.confirm !== (application ? 'register-existing-key-hbf-228t' : 'bond-session-hbf-228t') || config.route !== 'm5go' || !config.target)
         throw new Error('Explicit HBF-228T registration session confirmation and M5GO route are required');
-      this.proxyBondSession.prepare(config.target);
+      this.proxyBondSession.prepare(config.target, application ? 'application' : 'ble');
       return this.proxyStatus() as T;
     }
     let payload: any;
@@ -291,16 +293,27 @@ export class SharedRadioManager {
       payload = { action: 'bond', device: { address: config.target, model: 'HBF-228T' } };
     } else {
       if (request.action !== 'sync') throw new Error('M5GO uses the existing Omron key; application pairing must use USB');
-      // Never trust a caller-supplied bond_session flag on an ordinary sync.
-      payload = { ...request, bond_session: this.proxyBondSession.consume(request.device.address) };
+      // Only this process can authorize BLE/application registration, never caller flags.
+      const mode = this.proxyBondSession.consume(request.device.address);
+      payload = { ...request, bond_session: mode !== null, application_registration: mode === 'application' };
+      if (mode === 'application') payload.diagnostic = true;
     }
     payload = { ...payload, proxy: this.proxyRequestConfig() };
     const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_proxy_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
     this.pythonWorker = child;
     try {
       const result = await this.pythonResult<T>(child, payload);
+      if (payload.application_registration) {
+        const value = result as any;
+        if (value?.registration_only !== true || value.diagnostic?.stage !== 'registration_completed' ||
+            !Array.isArray(value.records) || value.records.length !== 0)
+          throw new Error('Application registration completion was not confirmed');
+      }
       this.proxyError = undefined;
-      if (request.action === 'sync') {
+      if (payload.application_registration) {
+        this.proxyLastRegistration = { at: new Date().toISOString(), success: true,
+          applicationKeyValueReused: true, historyRead: false };
+      } else if (request.action === 'sync') {
         const value = result as any;
         this.proxyLastSync = { at: new Date().toISOString(), success: true,
           records: Array.isArray(value.records) ? value.records.length : 0, invalidRecords: value.invalid_records };
@@ -308,7 +321,8 @@ export class SharedRadioManager {
       return result;
     } catch (error) {
       this.proxyError = (error as Error).message;
-      if (request.action === 'sync') this.proxyLastSync = { at: new Date().toISOString(), success: false, error: this.proxyError };
+      if (payload.application_registration) this.proxyLastRegistration = { at: new Date().toISOString(), success: false, error: this.proxyError };
+      else if (request.action === 'sync') this.proxyLastSync = { at: new Date().toISOString(), success: false, error: this.proxyError };
       throw error;
     } finally {
       await stopProcess(child); this.pythonWorker = undefined;
@@ -375,7 +389,7 @@ export class SharedRadioManager {
   }
 
   private async callSelfCare<T>(request: any): Promise<T> {
-    if (['proxy-config', 'proxy-probe', 'proxy-bond', 'proxy-prepare-bond-session', 'proxy-cancel-bond-session'].includes(request?.action)) return this.proxyOperation<T>(request);
+    if (['proxy-config', 'proxy-probe', 'proxy-bond', 'proxy-prepare-bond-session', 'proxy-prepare-application-registration', 'proxy-cancel-bond-session'].includes(request?.action)) return this.proxyOperation<T>(request);
     if (!['scan', 'pair', 'sync'].includes(request?.action)) throw new Error('Unknown SelfCare Bluetooth operation');
     if (request.adapter !== `hci${this.getConfig().hciDeviceId}`) throw new Error('SelfCare adapter must match the HomeHub HCI setting');
     if (this.usesProxy(request)) return this.proxyOperation<T>(request);
@@ -466,7 +480,7 @@ export class SharedRadioManager {
         const request = JSON.parse(body);
         if (req.url === '/proxy') {
           if (request.action === 'status') return reply(200, this.proxyStatus());
-          if (!['config', 'probe', 'bond', 'prepare-bond-session', 'cancel-bond-session'].includes(request.action)) throw new Error('Unknown proxy operation');
+          if (!['config', 'probe', 'bond', 'prepare-bond-session', 'prepare-application-registration', 'cancel-bond-session'].includes(request.action)) throw new Error('Unknown proxy operation');
           return reply(200, await this.arbiter.run('selfcare', { ...request, action: 'proxy-' + request.action }));
         }
         if (req.url === '/watch') return reply(200, await this.configureWatch(request));
