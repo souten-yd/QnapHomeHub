@@ -7,6 +7,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir=$(mktemp -d "${TMPDIR:-/tmp}/homehub-m5go-ci.XXXXXX")
 trap 'rm -rf "$build_dir"' EXIT HUP INT TERM
 cp "$root/firmware/m5go/ble-proxy.yaml" "$build_dir/ble-proxy.yaml"
+cp -R "$root/firmware/m5go/components" "$build_dir/components"
 cat > "$build_dir/secrets.yaml" <<'EOF'
 wifi_ssid: "HOMEHUB-CI-NOT-A-REAL-NETWORK"
 wifi_password: "ci-only-not-a-real-password"
