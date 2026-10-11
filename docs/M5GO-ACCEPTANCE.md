@@ -125,6 +125,14 @@ PR #40は、管理APIで対象の次のM5GO同期1回だけBLE登録を許可す
 
 main CI `38150455024`とDocker公開`38150455019`が成功。タグv0.3.27が検証したmain `d0dc28d`を指すことを照合し、QNAPへ反映した。updaterはversion 0.3.27・success・busy false。health ok、radio available/running/lowIo true、USB経路、API接続、予約pending false、SelfCare listener ready・busyなし・errorなしを確認。設定・診断の稼働確認であり、体重計との登録セッションはまだ開始していない。
 
+### v0.3.27の同一接続での登録・履歴試験結果
+
+2026-10-12 00:22:03〜00:22:10 JST、ユーザーの新しいP表示確認後に登録付き同期を1回だけ実行した。HBF自動同期OFF・M5GO経路を維持し、別HBFジョブの介入なし。接続番号3のコントローラー記録は`[[834,0,1]]`で、GAP認証成功983 ms、保存bond確認987 ms、既存キーのcharacteristic書込み3898 msを記録した。診断は`explicit_bond_session:true`、`link_security:authenticated`、`stage:unlock`、**応答`8101`**。履歴通知0件、通信開始・履歴読取り・通信終了には到達しなかった。
+
+これにより、この条件では「BLE登録した同じ暗号化接続で既存キーのopcode 1認証を行えば履歴へ進める」という仮説は成立しなかった。以前の暗号化失敗`0x06`とは異なり、暗号化成功後のアプリ認証拒否を確認した。キー本体を出力せず、キー再発行・登録opcodeへのフォールバック・設定EEPROM書込みは行っていない。切断直前にもbondメタデータは存在した。通常再接続の追加試験は開始していない。
+
+予約解除、USB、元の自動同期ONへ復帰し、予約pending false、API接続、SelfCare listener ready・busyなし・errorなしを確認。非公開証拠は`secrets/m5go-bond-session-isolated-result.json`と`secrets/v0327-after-registration-listener.json`。監視プロセスは終了している。同じP表示試験は繰り返さない。次はHBF固有のアプリキーと接続元の登録条件を調べる。USBで有効なキーがM5GOでも使えること、同じ値の再登録で既存USB接続を保持できることのいずれも未証明。M5GO履歴取得・通常再接続・新規測定自動保存は未達。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。

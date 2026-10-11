@@ -28,6 +28,14 @@ HBF対応openScaleの実装を再確認すると、通知購読後に既存キ�
 
 hass-omron PR #175も同じ`0x06`だが、対象は血圧計であり、登録確定のEEPROM書込みをHBFへ転用する根拠にはならない。今回の結果から全ゼロIRK対策や待機延長だけを再試行する根拠も得られていない。USBと元の自動同期へ復帰済み。
 
+### 同一暗号化接続での既存アプリキー認証（00:22 JST）
+
+v0.3.27の明示登録付き同期で、BLE登録・暗号化成功後、同じ接続のまま既存アプリキーを送った。応答は`8101`で、履歴開始前に停止した。これにより、今回の条件では登録直後の切断を避けるだけでは履歴へ進めないことを確認した。下位の暗号化失敗とアプリ認証拒否を分けて扱う。詳細は受入記録を参照。
+
+[openScaleのHBF対応実装](https://github.com/oliexdev/openScale/blob/master/android_app/app/src/main/java/com/health/openscale/core/bluetooth/scales/OmronWlcHandler.kt)は、キー認証の拒否後に登録用opcode 2・新しいキーのopcode 0書込みへ進む。今回の「既存キー・USB環境を保護」という条件では、そのフォールバックをそのまま採用しない。血圧計向け[esphome-omronの固定版](https://github.com/dzikus/esphome-omron/blob/5dfe3eedb11d79ea19627054aea0f64f833b3980/components/omron/omron_session.cpp)ではopcode 2を暗号化状態確認として通常認証前にも使うが、HBF-228Tで同じ意味・効果を持つ証拠はない。これだけを理由に追加の物理操作を依頼しない。
+
+[OMRONの公式FAQ](https://www.faq.healthcare.omron.co.jp/faq/show/16037?site_domain=jp)は複数人対応の体組成計でユーザーごとにスマートフォンを登録する構成を説明する。ただし、BLE接続元とアプリキーの内部対応、既存キーを別接続元から利用する方法、同じ値の再登録で旧接続元が保持されるかについては規定していない。「8101だから既存キーが壊れた」「1台のホストしか使えない」のどちらも現状の証拠からは断定しない。
+
 ## 公式資料
 
 - [OMRON HBF-227T/228T/230T共通取扱説明書](https://store.healthcare.omron.co.jp/support/download/manual/pdf/6602384-7D_HBF-230T-SW.pdf): HBF-228Tを対象に含む。初期登録、通常通信、通信設定の削除は別操作。ボタン表示の確認には使えるが、ESP32向けGATT/SMPの実装仕様ではない。
