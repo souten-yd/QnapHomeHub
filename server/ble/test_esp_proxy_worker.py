@@ -227,6 +227,28 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.writes, [])
         self.assertTrue(self.client.disconnected and self.remote.closed)
 
+    async def test_bond_reservation_precedes_connect_and_missing_support_blocks_connect(self):
+        from esp_proxy_security import LinkSecurityError
+        from unittest.mock import AsyncMock, Mock
+        self.request['action'] = 'bond'
+        gate = SimpleNamespace(connected=AsyncMock(), authenticated=AsyncMock(), mark=Mock())
+        self.remote.prepare_security = AsyncMock(return_value=gate)
+        async def prepare(address):
+            self.assertEqual(address, ADDRESS)
+            self.assertFalse(self.client.is_connected)
+        self.remote.prepare_bond = AsyncMock(side_effect=prepare)
+        result = await operate(self.request, {}, self.remote.factory)
+        self.assertTrue(result['bonded'])
+        self.assertEqual(self.client.writes, [])
+        self.remote.prepare_bond.assert_awaited_once_with(ADDRESS)
+        gate.connected.assert_awaited_once_with(require_bond=False)
+        gate.authenticated.assert_awaited_once()
+        self.remote.prepare_bond.side_effect = LinkSecurityError('explicit_bond_firmware_update_required')
+        self.client.connect = AsyncMock()
+        with self.assertRaises(LinkSecurityError):
+            await operate(self.request, {}, self.remote.factory)
+        self.client.connect.assert_not_called()
+
     async def test_advertisement_contract_and_api_loss(self):
         self.request.update(action='watch', addresses=[ADDRESS])
         events = []

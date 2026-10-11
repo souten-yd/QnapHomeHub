@@ -88,6 +88,11 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
         client = remote.client(target, adv)
         try:
             security = await remote.prepare_security(trace) if action in ('sync', 'bond') else None
+            if action == 'bond' and security:
+                if not pairing:
+                    raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
+                await remote.prepare_bond(target)
+                security.mark('explicit_bond_prepared')
             await asyncio.wait_for(client.connect(), 25)
             if security:
                 await security.connected(require_bond=action == 'sync')
