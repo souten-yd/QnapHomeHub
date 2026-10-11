@@ -56,6 +56,7 @@ async function boot() {
     renderConfig();
     await renderRegistered();
     await refreshDebug(false);
+    void refreshRadioControl();
   } catch (error) {
     if (!health.authRequired) console.error(error);
   }
@@ -503,3 +504,70 @@ document.getElementById('ioDiagDownload')?.addEventListener('click', () => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 });
+
+
+let radioControlBusy = false;
+let currentRadioControl = null;
+function setRadioControlButtons(available) {
+  $('#radioControlRefresh').disabled = radioControlBusy;
+  $('#radioControlStop').disabled = radioControlBusy || !available || !currentRadioControl?.running;
+  $('#radioControlStart').disabled = radioControlBusy || !available || currentRadioControl?.running;
+  $('#radioControlLowIo').disabled = radioControlBusy || !available || currentRadioControl?.lowIo && currentRadioControl?.running;
+}
+async function refreshRadioControl() {
+  if (radioControlBusy) return;
+  radioControlBusy = true;
+  setRadioControlButtons(false);
+  try {
+    const status = await api('/api/radio/control/status');
+    currentRadioControl = status;
+    $('#radioControlState').textContent = status.running ? '稼働中' : '停止中';
+    $('#radioControlLogging').textContent = status.loggingDriver || '不明';
+    $('#radioControlTmpfs').textContent =
+      (status.tmpfsDbus ? 'D-Bus RAM' : 'D-Bus通常') + ' / ' +
+      (status.tmpfsTmp ? 'TMP RAM' : 'TMP通常');
+    $('#radioControlBadge').textContent = status.running ?
+      status.lowIo ? '省書き込み稼働中' : '通常稼働中' : '停止中';
+    $('#radioControlMessage').textContent = status.lowIo ?
+      'ログ無効・D-Bus/TMP RAM構成です。実際のHDD IOPS削減効果は診断で比較してください。' :
+      '省書き込み設定は未適用です。省書き込み起動を選ぶとradioだけを再作成します。';
+  } catch (error) {
+    currentRadioControl = null;
+    $('#radioControlBadge').textContent = '状態取得不可';
+    $('#radioControlMessage').textContent =
+      '更新サービスが未対応・停止中、またはDocker構成を検証できません: ' + error.message;
+  } finally {
+    radioControlBusy = false;
+    setRadioControlButtons(Boolean(currentRadioControl?.available));
+  }
+}
+async function changeRadioControl(mode) {
+  if (radioControlBusy || !['stop', 'start', 'low-io'].includes(mode)) return;
+  const warning = mode === 'stop'
+    ? 'radioを停止します。SelfCareの自動/手動Bluetooth同期とSwitchBot操作は使えなくなります。測定済みデータは残ります。実行しますか？'
+    : mode === 'low-io'
+      ? 'radioだけを省書き込み設定で再作成します。一時的にSelfCare同期とSwitchBot操作が中断されます。実行しますか？'
+      : '既存のDocker radioを起動します。現在のログとtmpfs設定は変更しません。実行しますか？';
+  if (!confirm(warning)) return;
+  radioControlBusy = true;
+  setRadioControlButtons(false);
+  $('#radioControlMessage').textContent = '処理中です。完了するまでこの画面を閉じないでください…';
+  try {
+    const status = await api('/api/radio/control/mode', {
+      method: 'POST', body: JSON.stringify({ mode }),
+    });
+    currentRadioControl = status;
+    $('#radioControlMessage').textContent = '操作完了。最新のradio状態を確認します。';
+  } catch (error) {
+    $('#radioControlMessage').textContent = '操作に失敗しました: ' + error.message +
+      '（Bluetooth状態を再確認してください）';
+  } finally {
+    radioControlBusy = false;
+    await refreshRadioControl();
+    void refreshRadioStatus();
+  }
+}
+$('#radioControlRefresh').onclick = () => void refreshRadioControl();
+$('#radioControlStop').onclick = () => void changeRadioControl('stop');
+$('#radioControlStart').onclick = () => void changeRadioControl('start');
+$('#radioControlLowIo').onclick = () => void changeRadioControl('low-io');
