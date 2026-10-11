@@ -93,7 +93,7 @@ v0.3.25では、`BLE Session`診断を持つ実験firmwareに限り、履歴読�
 
 診断には接続・CCCD・認証の順序とbondの種類・長さ等のメタデータだけを含める。鍵本体・MACアドレス・測定値を含めない。初期接続数1とradio共通排他を前提に、別接続が割り込んだ場合は番号不一致で停止する。BLE登録は引き続き明示操作のみ。
 
-PR #36候補に接続ごとの`BLE Session`累積診断（最大24イベント）を追加。APIの状態更新がまとめられても過去イベントを保持する。GATT OPEN、保存bondのkey mask/長さ/アドレス種別とゼロ値判定、暗号化要求、認証結果、CCCD書込み結果、最初のcharacteristic書込み結果、切断を記録する。鍵・アドレス・GATT payloadは出力しない。C++境界試験、実firmwareビルド、暗号化OTAが成功し、実機から`seq:0`の初期診断を受信。RAMはビルド時54.5%、flashは62.9%。これは再接続成功の証拠ではない。QNAP側ガードはPR #38で分離し、v0.3.25として公開。実験firmwareの次候補版はv0.3.26、PR #36はdraftのまま。
+PR #36候補に接続ごとの`BLE Session`累積診断（最大24イベント）を追加。APIの状態更新がまとめられても過去イベントを保持する。GATT OPEN、保存bondのkey mask/長さ/アドレス種別とゼロ値判定、暗号化要求、認証結果、CCCD書込み結果、最初のcharacteristic書込み結果、切断を記録する。鍵・アドレス・GATT payloadは出力しない。C++境界試験、実firmwareビルド、暗号化OTAが成功し、実機から`seq:0`の初期診断を受信。RAMはビルド時54.5%、flashは62.9%。これは再接続成功の証拠ではない。QNAP側ガードはPR #38で分離し、v0.3.25として公開。実験firmwareの次候補版はv0.3.27、PR #36はdraftのまま。
 
 ```sh
 npm install --prefix server --no-audit --no-fund
