@@ -10,6 +10,94 @@ from esp_proxy_transport import ProxyConnection
 
 @unittest.skipUnless(importlib.util.find_spec('bleak_esphome'), 'isolated proxy environment required')
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    def notification_client(self, remote):
+        import ble_protocol as protocol
+        from aioesphomeapi import BluetoothProxyFeature
+        from bleak.backends.service import BleakGATTService, BleakGATTServiceCollection
+        from bleak.backends.characteristic import BleakGATTCharacteristic
+        from bleak.backends.descriptor import BleakGATTDescriptor
+        from bleak_esphome.backend.client import CCCD_UUID
+        client = remote.client('AA:BB:CC:11:22:33', SimpleNamespace(name='HBF', address_type=0))
+        backend = client._backend
+        backend._is_connected = True
+        backend._feature_flags |= BluetoothProxyFeature.REMOTE_CACHING.value
+        backend.services = BleakGATTServiceCollection()
+        service = BleakGATTService(None, 1, protocol.SERVICE)
+        backend.services.add_service(service)
+        chars = {}
+        for i, uuid in enumerate([protocol.UNLOCK, *protocol.RX]):
+            char = BleakGATTCharacteristic(None, 10 + i * 2, uuid, ['notify', 'write'], lambda: 20, service)
+            backend.services.add_characteristic(char)
+            backend.services.add_descriptor(BleakGATTDescriptor(None, char.handle + 1, CCCD_UUID, char))
+            chars[uuid] = char
+        self.api.bluetooth_gatt_write_descriptor = AsyncMock()
+        self.notify_stop = AsyncMock()
+        self.api.bluetooth_gatt_start_notify = AsyncMock(return_value=(self.notify_stop, Mock()))
+        return client, chars
+
+    async def test_real_bleak_session_uses_supported_notification_api(self):
+        import ble_protocol as protocol
+        from esp_proxy_worker import HbfProxySession
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            client, chars = self.notification_client(remote)
+            session = HbfProxySession(client, {})
+            await session.subscribe()
+            self.api.bluetooth_gatt_write_descriptor.reset_mock()
+            self.api.bluetooth_gatt_write = AsyncMock()
+            async def authenticate(*args):
+                # Clearing cached RX CCCDs must precede the existing-key write.
+                self.assertEqual([c.args[1:3] for c in self.api.bluetooth_gatt_write_descriptor.await_args_list],
+                                 [(chars[u].handle + 1, b'\x00\x00') for u in protocol.RX[1:]])
+                self.assertEqual(args[2], b'\x01' + b'\x12' * 16)
+                session.unlocks.put_nowait(b'\x81\x00')
+            self.api.bluetooth_gatt_write.side_effect = authenticate
+            await session.unlock(1, b'\x12' * 16, 0x81)
+            self.api.bluetooth_gatt_write.assert_awaited_once()
+            self.assertEqual([c.args[1:3] for c in self.api.bluetooth_gatt_write_descriptor.await_args_list],
+                             [(chars[u].handle + 1, b'\x00\x00') for u in [*protocol.RX[1:], protocol.UNLOCK]] +
+                             [(chars[u].handle + 1, b'\x01\x00') for u in protocol.RX[1:]])
+            self.notify_stop.assert_awaited_once()
+
+    async def test_cccd_ack_precedes_forwarding_removal_and_failure_is_propagated(self):
+        import ble_protocol as protocol
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            client, chars = self.notification_client(remote)
+            char = chars[protocol.UNLOCK]
+            await client.start_notify(char, lambda *_: None)
+            entered, release = asyncio.Event(), asyncio.Event()
+            async def delayed_write(*args):
+                entered.set()
+                await release.wait()
+            self.api.bluetooth_gatt_write_descriptor.side_effect = delayed_write
+            task = asyncio.create_task(client.stop_notify(char))
+            await asyncio.wait_for(entered.wait(), 1)
+            self.assertFalse(task.done())
+            self.notify_stop.assert_not_awaited()
+            release.set()
+            await asyncio.wait_for(task, 1)
+            self.notify_stop.assert_awaited_once()
+            self.api.bluetooth_gatt_write_descriptor.side_effect = None
+            await client.start_notify(char, lambda *_: None)
+            self.notify_stop.reset_mock()
+            self.api.bluetooth_gatt_write_descriptor.side_effect = TimeoutError('missing ACK')
+            with self.assertRaises(TimeoutError):
+                await client.stop_notify(char)
+            self.notify_stop.assert_not_awaited()
+
+    async def test_missing_cccd_or_disconnected_client_never_writes(self):
+        import ble_protocol as protocol
+        from bleak.exc import BleakError
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            client, chars = self.notification_client(remote)
+            char = chars[protocol.RX[1]]
+            with patch.object(type(char), 'get_descriptor', return_value=None):
+                with self.assertRaisesRegex(BleakError, 'descriptor is unavailable'):
+                    await client.stop_notify(char)
+            client._backend._is_connected = False
+            with self.assertRaises(BleakError):
+                await client.stop_notify(char)
+            self.api.bluetooth_gatt_write_descriptor.assert_not_awaited()
+
     def bond_services(self):
         from aioesphomeapi import UserService, UserServiceArg, UserServiceArgType, SupportsResponseType
         return [UserService(name='prepare_ble_bond', key=1, supports_response=SupportsResponseType.STATUS,
