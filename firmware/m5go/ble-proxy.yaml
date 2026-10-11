@@ -21,6 +21,8 @@ external_components:
 known_bond_security:
   diagnostic:
     name: BLE Security
+  session_diagnostic:
+    name: BLE Session
 
 wifi:
   ssid: !secret wifi_ssid

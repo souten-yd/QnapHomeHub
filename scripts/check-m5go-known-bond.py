@@ -14,11 +14,18 @@ using esp_gap_ble_cb_event_t = int;
 using esp_gatt_if_t = int;
 constexpr int ESP_GATTC_OPEN_EVT=1, ESP_GATT_OK=0, ESP_OK=0, ESP_BD_ADDR_LEN=6, ESP_BLE_SEC_ENCRYPT=1;
 constexpr int ESP_GAP_BLE_AUTH_CMPL_EVT=8;
-constexpr int ESP_GATTC_DISCONNECT_EVT=2;
-struct esp_ble_gap_cb_param_t { struct { struct { uint8_t bd_addr[6]; bool success; int fail_reason; } auth_cmpl; } ble_security; };
-struct esp_ble_bond_dev_t { uint8_t bd_addr[6]; };
+constexpr int ESP_GATTC_DISCONNECT_EVT=2, ESP_GATTC_WRITE_DESCR_EVT=3, ESP_GATTC_WRITE_CHAR_EVT=4;
+constexpr int ESP_BLE_ENC_KEY_MASK=1, ESP_BLE_ID_KEY_MASK=2;
+struct esp_ble_gap_cb_param_t { struct { struct { uint8_t bd_addr[6]; bool success; int fail_reason; int auth_mode; int addr_type; bool key_present; } auth_cmpl; } ble_security; };
+struct esp_ble_bond_dev_t { uint8_t bd_addr[6]; int bd_addr_type=0;
+ struct { int key_mask=3;
+  struct { uint8_t key_size=16; uint16_t ediv=0; uint8_t rand[8]{}; } penc_key;
+  struct { uint8_t irk[16]{}; } pid_key;
+ } bond_key;
+};
 struct esp_ble_gattc_cb_param_t {
-  struct { int status; uint8_t remote_bda[6]; } open;
+  struct { int status; uint8_t remote_bda[6]; uint16_t conn_id; } open;
+  struct { int status; uint16_t conn_id; uint16_t handle; } write;
   struct { uint8_t remote_bda[6]; int reason; } disconnect;
 };
 inline int bond_count=0, list_error=0, requests=0, lists=0, request_error=0;
@@ -33,7 +40,7 @@ inline int esp_ble_set_encryption(uint8_t *address,int mode) {
   if (std::memcmp(address,saved_address,6) || mode!=ESP_BLE_SEC_ENCRYPT) __builtin_abort();
   ++requests; return request_error;
 }
-namespace esphome { class Component {}; }
+namespace esphome { class Component { public: virtual void setup() {} }; inline uint32_t millis() { return 100; } }
 namespace esphome::text_sensor { class TextSensor {
  public: std::string state; void publish_state(const std::string &value) { state=value; }
 }; }
@@ -46,6 +53,9 @@ int main() {
   esphome::known_bond_security::KnownBondSecurity component;
   esphome::text_sensor::TextSensor diagnostic;
   component.set_diagnostic(&diagnostic);
+  esphome::text_sensor::TextSensor journal;
+  component.set_session_diagnostic(&journal);
+  component.setup(); assert(journal.state.find("\"seq\":0")!=std::string::npos);
   esp_ble_gattc_cb_param_t event{};
   std::memcpy(event.open.remote_bda,saved_address,6);
   auto open=[&]() { component.gattc_event_handler(ESP_GATTC_OPEN_EVT,0,&event); };
@@ -65,6 +75,7 @@ int main() {
   // A valid connection to the stored peer makes exactly one encryption request.
   open(); assert(requests==1);
   assert(diagnostic.state=="encryption_requested");
+  assert(journal.state.find("bond_open\",0,3,16,0,1,1,1")!=std::string::npos);
   esp_ble_gap_cb_param_t auth{};
   std::memcpy(auth.ble_security.auth_cmpl.bd_addr,saved_address,6);
   auth.ble_security.auth_cmpl.success=true;
@@ -98,6 +109,24 @@ int main() {
   assert(diagnostic.state=="authenticated;disconnected:19");
   component.gap_event_handler(ESP_GAP_BLE_AUTH_CMPL_EVT,&auth);
   assert(diagnostic.state=="authenticated;disconnected:19" && requests==2);
+  assert(journal.state.find("auth_ok")!=std::string::npos);
+  assert(journal.state.find("disconnect")!=std::string::npos);
+  auto old=journal.state;
+  component.gap_event_handler(ESP_GAP_BLE_AUTH_CMPL_EVT,&auth);
+  assert(journal.state==old);
+  open();
+  assert(journal.state.find("auth_ok")==std::string::npos);
+  event.write.conn_id=99;
+  component.gattc_event_handler(ESP_GATTC_WRITE_DESCR_EVT,0,&event);
+  assert(journal.state.find("cccd")==std::string::npos);
+  event.write.conn_id=event.open.conn_id;
+  component.gattc_event_handler(ESP_GATTC_WRITE_CHAR_EVT,0,&event);
+  old=journal.state;
+  component.gattc_event_handler(ESP_GATTC_WRITE_CHAR_EVT,0,&event);
+  assert(journal.state==old);
+  for(int i=0;i<30;++i) component.gattc_event_handler(ESP_GATTC_WRITE_DESCR_EVT,0,&event);
+  assert(journal.state.find("\"overflow\":true")!=std::string::npos);
+  assert(journal.state.size()<3072);
 }
 '''
 
@@ -105,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix='m5go-bond-test-') as directory:
     path = Path(directory)
     (path / 'stub.h').write_text(STUB)
     for name in ['esp_gap_ble_api.h', 'esp_gattc_api.h',
-                 'esphome/core/component.h', 'esphome/core/log.h',
+                 'esphome/core/component.h', 'esphome/core/log.h', 'esphome/core/hal.h',
                  'esphome/components/text_sensor/text_sensor.h']:
         header = path / name
         header.parent.mkdir(parents=True, exist_ok=True)

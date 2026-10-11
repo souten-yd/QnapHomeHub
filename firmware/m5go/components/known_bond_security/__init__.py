@@ -12,6 +12,7 @@ CONFIG_SCHEMA = cv.Schema({
     cv.GenerateID(): cv.declare_id(KnownBondSecurity),
     cv.GenerateID(esp32_ble.CONF_BLE_ID): cv.use_id(esp32_ble.ESP32BLE),
     cv.Optional("diagnostic"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
+    cv.Optional("session_diagnostic"): text_sensor.text_sensor_schema(entity_category="diagnostic"),
 }).extend(cv.COMPONENT_SCHEMA)
 
 
@@ -24,3 +25,6 @@ async def to_code(config):
     if "diagnostic" in config:
         diagnostic = await text_sensor.new_text_sensor(config["diagnostic"])
         cg.add(var.set_diagnostic(diagnostic))
+    if "session_diagnostic" in config:
+        diagnostic = await text_sensor.new_text_sensor(config["session_diagnostic"])
+        cg.add(var.set_session_diagnostic(diagnostic))
