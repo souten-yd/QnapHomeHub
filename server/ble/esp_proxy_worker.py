@@ -19,6 +19,48 @@ class ProxyInputError(ValueError):
     """Operator-safe messages from our own validation; never raw dependency errors."""
 
 
+class HbfProxySession(Session):
+    """Stage HBF notifications around existing-key auth; leave USB Session intact.
+
+    HBF-222T observations document RX0+unlock before auth, then unlock off and
+    RX1..3 on before memory transfer. HBF-228T hardware acceptance is separate.
+    """
+
+    async def subscribe(self):
+        await self.client.start_notify(protocol.RX[0], lambda _, data: self.notify(0, bytes(data)))
+        await asyncio.sleep(0.75)
+        await self.client.start_notify(protocol.UNLOCK, lambda _, data: self.unlocks.put_nowait(bytes(data)))
+        await asyncio.sleep(0.75)
+
+    async def unlock(self, opcode, key, expected):
+        if opcode != 1 or expected != 0x81:
+            raise ProxyInputError('M5GO HBF sessions only authenticate an existing key')
+        if self.trace is not None:
+            self.trace['stage'] = 'prepare_unlock_notifications'
+        # A bonded peripheral may retain CCCDs across connections. Establish
+        # the pre-auth state even when a previous session enabled RX1..3.
+        for uuid in protocol.RX[1:]:
+            await self.disable_notification(uuid)
+        await super().unlock(opcode, key, expected)
+        if self.trace is not None:
+            self.trace['stage'] = 'subscribe_history'
+        # Only a successful 8100 response permits the notification transition.
+        # Do not send the memory-start command if any CCCD operation fails.
+        # bleak-esphome stop_notify removes forwarding without writing a cached
+        # CCCD. Explicitly disable it on the peripheral and await the write ACK.
+        await self.disable_notification(protocol.UNLOCK)
+        await self.client.stop_notify(protocol.UNLOCK)
+        for index in range(1, len(protocol.RX)):
+            await self.client.start_notify(protocol.RX[index], lambda _, data, i=index: self.notify(i, bytes(data)))
+
+    async def disable_notification(self, uuid):
+        characteristic = self.client.services.get_characteristic(uuid)
+        descriptor = characteristic.get_descriptor('00002902-0000-1000-8000-00805f9b34fb') if characteristic else None
+        if descriptor is None:
+            raise ProxyInputError('HBF notification descriptor is unavailable')
+        await self.client.write_gatt_descriptor(descriptor.handle, b'\x00\x00')
+
+
 def validate(request):
     if request.get('action') not in ('probe', 'sync', 'bond', 'watch'):
         raise ProxyInputError('Unsupported M5GO operation')
@@ -112,14 +154,13 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 # Explicit operator action only. This is BLE security, NOT Session.pair().
                 if not pairing:
                     raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
-                # The existing USB Session subscribes before Omron security.
-                # Use the same notifications for BLE registration and any
-                # explicitly authorized existing-key history transaction.
+                # Stage HBF authentication notifications before BLE pairing;
+                # add the remaining data channels only after application auth.
                 if trace is not None:
                     trace['stage'] = 'subscribe'
                 if security:
                     security.mark('notifications_requested')
-                session = Session(client, trace)
+                session = HbfProxySession(client, trace)
                 await session.subscribe()
                 if security:
                     security.mark('notifications_ready')
@@ -139,7 +180,7 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 return {'bonded': True, 'application_key_changed': False}
             if trace is not None:
                 trace['stage'] = 'subscribe'
-            session = Session(client, trace)
+            session = HbfProxySession(client, trace)
             if security:
                 security.mark('notifications_requested')
             await session.subscribe()
