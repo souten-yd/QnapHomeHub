@@ -1,5 +1,9 @@
 # USB BluetoothとQnapHomeHubの共用
 
+## 新規QNAP導入時の必須確認
+
+**QNAPホストとDocker radioで`bluetoothd`が二重起動すると、大量のアイドルHDD書き込みが発生する実例があります。** 新規セットアップ・QTS更新・NAS再起動後は[ホストBluetoothの確認と安全な抑制・復旧手順](QNAP-HOST-BLUEZ-LOW-IO-RUNBOOK.md)を参照してください。QNAP標準BlueZを削除せず、必要性と起動条件を確認し、Docker専用BlueZとSelfCareの保存済みデータを保護します。
+
 ## 方針
 
 Web画面・ポート・記録DBは分離し、Bluetoothの制御だけを共通の `qnaphomehub-radio` コンテナへ集約します。ESP32・Home Assistantは不要です。QNAPのUSBドングルを使用します。
