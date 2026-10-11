@@ -1,0 +1,34 @@
+# First-generation M5GO / M5Stack Core ESP32 (not Core2/CoreS3).
+# Dedicated Wi-Fi active BLE proxy. This replaces the original firmware.
+# Keep Wi-Fi / Noise API credentials in the untracked secrets.yaml.
+esphome:
+  name: qnap-m5go-proxy
+  friendly_name: QNAP M5GO Bluetooth Proxy
+  min_version: 2025.8.0
+
+esp32:
+  board: m5stack-core-esp32
+  framework:
+    type: esp-idf
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+
+logger:
+  level: WARN
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true
+
+bluetooth_proxy:
+  active: true
+  connection_slots: 1
