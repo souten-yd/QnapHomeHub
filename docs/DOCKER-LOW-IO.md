@@ -7,10 +7,15 @@ Omron measurements are still durably recorded by the separate QnapSelfCare QPKG.
 Pairing/bonding state remains in `./data/bluetooth`; HomeHub configuration stays in `./data/homehub`.
 No native HomeHub QPKG is installed or started by this release.
 
-**The source of ~99 Write IOPS on the QNAP NAS is not proven.**
-Disabling Docker radio logs and moving only temporary D-Bus files to RAM reduces
-*possible* causes. QTS host `bluetoothd` can still write independently.
-Do not promise HDD quietness before repeating actual measurements.
+**Original v0.3.15 investigation note (superseded by measured evidence on one QNAP NAS, 2026-10-11):**
+At the time, the source of ~99 Write IOPS was not proven. Later controlled checks
+showed that the QTS **host** `bluetoothd` wrote ~1.2–1.6 MB/s and the physical HDD
+IOPS dropped from ~83.84 to ~2.7 during a brief host-daemon pause while the Docker
+radio remained running; after disabling the QTS host daemon's persistent startup
+setting, a NAS reboot preserved ~2.53 Write IOPS/HDD. Docker log/TMP changes **alone**
+did not eliminate the high idle IOPS. For new installations see
+[QNAP host BlueZ low-I/O runbook](QNAP-HOST-BLUEZ-LOW-IO-RUNBOOK.md).
+These results are one-NAS evidence and do not establish universal QTS behavior.
 
 ## New built-in one-click report
 
