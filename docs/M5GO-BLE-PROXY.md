@@ -13,6 +13,10 @@ Unixソケットの経路選択、Web管理を実装しています。**初期�
 **実機の自動保存は未検証**です。モック/CI成功と実機同期成功は分けて扱います。
 最新の検証状況は [受入記録](M5GO-ACCEPTANCE.md) を参照してください。
 
+**運用にはv0.3.23以降を使用してください。** v0.3.22の広告購読は旧形式のみで、
+ESPHome 2026.9.1のRAW広告を受信できませんでした。v0.3.23は機能フラグに応じて
+RAW形式を購読・解析し、既存の広告／GATT処理へ渡します。
+
 ESPHome Bluetooth Proxy: https://esphome.io/components/bluetooth_proxy/
 Python client: https://bleak-esphome.readthedocs.io/en/latest/usage.html
 M5GO仕様: https://docs.m5stack.com/ja/core/m5go
@@ -171,9 +175,9 @@ USBの返却結果一致を確認。接続/通知/認証/履歴/チェックサ�
 **これらはモック/契約テストであり、実機の無線・認証・同期成功を示しません。**
 
 
-## QNAPのWeb設定（0.3.22以降）
+## QNAPのWeb設定（0.3.23以降）
 
-1. HomeHubの通常更新で `homehub` / `radio` を0.3.22以降へ更新し、管理画面にログインします。
+1. HomeHubの通常更新で `homehub` / `radio` を0.3.23以降へ更新し、管理画面にログインします。
    管理パスワード未設定ではM5GO設定APIを利用できません。
 2. 「M5GO Bluetooth Proxy」でLAN IP/ホスト名、ファームウェアと一致するNative API鍵、
    SelfCareに登録済みのHBF-228T MACを入力します。同期経路はまず **USB** のまま保存します。

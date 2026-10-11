@@ -8,6 +8,7 @@
 - PR #32: firmware/OTA/診断、v0.3.20。PRとmainのCI/firmwareビルド成功、Docker Release公開済み。
 - PR #33: 遠隔GATTワーカー、v0.3.21。PRとmainのCI/Dockerビルド成功、Docker Release公開済み。
 - Web/Unix socket経路管理: v0.3.22。ソース実装済み。CIの最終結果は [Actions](https://github.com/souten-yd/QnapHomeHub/actions)、公開状況は [v0.3.22 Release](https://github.com/souten-yd/QnapHomeHub/releases/tag/v0.3.22) を確認。
+- v0.3.23: RAW広告購読の修正。v0.3.22はAPI接続が成功してもESPHome 2026.9.1の広告を受信できなかった。実機調査で旧形式0台／RAW形式15台を確認。公開・CI状況はActionsを参照。
 
 ## 要求ごとの証拠と境界
 
@@ -29,17 +30,19 @@
 | 日本語USB/OTA/Web/復旧手順 | M5GO-BLE-PROXY.md | 作成済み |
 | 通常設置HBF測定→M5GO→SelfCare DB保存 | 実測日時・ユーザー・値の保存確認が必要 | **NOT TESTED** |
 
-## 実機工程に必要な操作
+## 実機確認と残る工程
 
-1. 対象M5GOのUSBポートを確認する。作業PCでは `/dev/ttyUSB0` にCP2104（serial末尾01DB704F）が見えるが、対象機器という確認はまだない。未書込み。
-2. `firmware/m5go/secrets.yaml` に2.4GHz Wi-FiのSSID/パスワードとNative API鍵をローカルで設定する（0600）。秘密情報をGitHubやチャットに貼らない。
-3. ドキュメントの実運用ビルド・USB書込みを実施。M5GOのLAN IPを確認し、QNAPの管理画面で登録する。
-4. API/広告/GATT診断と、既存Omronキーによる認証・ユーザー別履歴同期を確認する。BLE bondが必要なら明示操作で検証し、既存bondやOmronキーを消去しない。
-5. 通常設置場所で新規測定し、SelfCareの対象ユーザーへ測定日時/値が自動保存されたことを確認する。
-6. Wi-Fi/API断・M5GO再起動・暗号化OTA・Docker再起動からの復旧、USB切り戻し、HEM-6232T/SwitchBot動作を実機で確認する。
+上表の自動試験とは別に、2026-10-11に次を確認した。資格情報・LAN情報・健康記録は公開しない。
 
-QNAPの管理接続先、HBFのMACとSelfCareの実機検証環境も必要です。
-現時点では接続先/運用資格情報を与えられていないため、既存DB・キー・実機構成にはアクセス/変更していません。
+- ユーザーが対象USB機器を確認。実運用ファームウェアのローカルビルド、USB書込み、暗号化OTA成功。
+- QNAPをv0.3.22へ更新。低I/O設定を維持し、Native API接続・診断表示・Webログインを確認。
+- radio停止／起動後の設定維持、API再接続、SelfCare待ち受け復帰を確認。
+- 通常設置で経路変更後にAPI再接続エラーを観測。M5GO起動ログを確認した後、API復帰。長期安定性は未判定。
+- BLE広告未受信の原因をRAW形式との不一致と特定。RAW購読で周辺機器を受信。HBF自体の広告・認証・履歴・自動保存は未確認。
+- 修正版のローカルtransportでも周辺13台を受信。USBへ切り戻した間にSelfCareのHBF待ち受け同期が成功し、1件追加・29件重複。これはUSBの証拠でありM5GO同期成功ではない。
+
+残る工程はv0.3.23のQNAP適用、HBF広告/GATT/既存キー認証/ユーザー別履歴、通常設置での新規測定の自動保存。
+実Wi-Fi断、切り戻し後のHBF・HEM・SwitchBot実動作も未検証。BLE bondが必要なら明示操作で検証し、既存bondやOmronキーを消去しない。
 
 ## ローカル再検証
 
@@ -53,5 +56,5 @@ python3 -m unittest discover -s server/ble -p 'test_*.py'
 PLAYWRIGHT_MODULE=/tmp/qhh-browser/node_modules/playwright/index.mjs node scripts/check-m5go-ui.mjs
 ```
 
-Python通常環境は依存不要の11テスト成功、専用環境は14テスト成功。
+Python専用環境はRAWバッチの実protobuf/実パーサー契約を含む15テスト成功。
 TypeScriptは32テスト成功。ブラウザ模擬APIテスト成功。これらは実機証拠に代用しません。

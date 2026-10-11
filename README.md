@@ -11,7 +11,7 @@ QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web 
 
 ## 主な機能
 
-**0.3.22（M5GO同期経路）:** 管理画面でM5GOの接続設定・API/広告/GATT診断・HBF-228Tだけの経路切替・USBへの切り戻しを追加しました。SelfCareのUnixソケットを維持し、既存Omron認証・履歴処理を遠隔GATTで利用します。初期経路はUSBです。**実機の自動保存は未検証**です。[設定手順](docs/M5GO-BLE-PROXY.md) / [受入記録](docs/M5GO-ACCEPTANCE.md)。
+**0.3.23（M5GO広告受信修正）:** ESPHomeのRAW広告に対応し、API接続できてもBLE広告が届かない不具合を修正しました。HBF-228Tだけの経路切替・USBへの切り戻しと、既存SelfCareのUnixソケットを維持します。初期経路はUSBです。**実機の自動保存は未検証**です。[設定手順](docs/M5GO-BLE-PROXY.md) / [受入記録](docs/M5GO-ACCEPTANCE.md)。
 
 **0.3.20（M5GOファームウェア検証）:** ESPHome 2026.9.1、暗号化OTA、接続1枠と診断センサーを追加。専用CIはダミー資格情報で実ビルドし、バイナリを公開しません。遠隔履歴同期は後続実装、実機同期は未検証です。
 

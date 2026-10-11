@@ -1,3 +1,4 @@
 bleak-esphome==4.1.0
 bleak==3.0.2
 aioesphomeapi==46.3.0
+bluetooth-data-tools==1.29.24
