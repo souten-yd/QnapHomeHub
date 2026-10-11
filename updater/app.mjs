@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
+import { createRadioControl } from './radio-control.mjs';
 
 const bind = process.env.UPDATER_BIND || '127.0.0.1';
 const port = Number(process.env.UPDATER_PORT || '8788');
@@ -14,6 +15,8 @@ const checkIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.UPDATE_CHECK
 const configFile = path.join(dataDir, 'config.json');
 const stateFile = path.join(dataDir, 'state.json');
 const testedMatterbridgeRef = `${image}:matterbridge-tested`;
+const radioControl = createRadioControl({ command, projectDir, composeProject,
+  overlay: '/app/compose.radio-low-io.yaml' });
 
 async function readSecret(name) {
   const file = process.env[`${name}_FILE`];
@@ -450,6 +453,22 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!authorized(req)) return send(res, 401, { error: 'Unauthorized' });
     if (req.method === 'GET' && req.url === '/status') return send(res, 200, statusPayload());
+    if (req.method === 'GET' && req.url === '/radio/status') return send(res, 200, await radioControl.status());
+    if (req.method === 'POST' && req.url === '/radio/mode') {
+      const body = await readBody(req);
+      if (Object.keys(body).length !== 1 || typeof body.mode !== 'string' ||
+          !['stop', 'start', 'low-io'].includes(body.mode)) {
+        return send(res, 400, { error: 'Only stop, start or low-io radio mode is allowed' });
+      }
+      if (busy || radioControl.busy) return send(res, 409, { error: 'An update or radio operation is in progress' });
+      try {
+        const result = await radioControl.execute(body.mode, { updateBusy: () => busy });
+        log('Explicit Web radio mode changed', { mode: body.mode, running: result.running, lowIo: result.lowIo });
+        return send(res, 200, result);
+      } catch (error) {
+        return send(res, 409, { error: (error instanceof Error ? error.message : 'Radio control failed').slice(0, 220) });
+      }
+    }
     if (req.method === 'POST' && req.url === '/check') return send(res, 200, await checkForUpdates({ triggerAuto: false }));
     if (req.method === 'PATCH' && req.url === '/config') {
       const body = await readBody(req);
