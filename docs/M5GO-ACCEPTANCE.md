@@ -53,5 +53,5 @@ python3 -m unittest discover -s server/ble -p 'test_*.py'
 PLAYWRIGHT_MODULE=/tmp/qhh-browser/node_modules/playwright/index.mjs node scripts/check-m5go-ui.mjs
 ```
 
-Python通常環境は依存不要の10テスト成功、専用環境は13テスト成功。
+Python通常環境は依存不要の11テスト成功、専用環境は14テスト成功。
 TypeScriptは32テスト成功。ブラウザ模擬APIテスト成功。これらは実機証拠に代用しません。

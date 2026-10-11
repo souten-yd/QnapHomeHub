@@ -66,7 +66,13 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                   'gatt_connected': False, 'omron_service_found': False,
                   'target': masked_mac(target) if target else None}
         if not target:
-            return output
+            # Preserve the original CLI's untargeted advertisement count.
+            try:
+                await asyncio.wait_for(remote.disconnected.wait(), request.get('scan_seconds', 12))
+            except TimeoutError:
+                output['devices_seen'] = len(remote.observations)
+                return output
+            raise ConnectionError('M5GO API disconnected')
         target = normalize_mac(target)
         try:
             adv = await remote.find(target, request.get('scan_seconds', 12) if action == 'probe' else 20)
