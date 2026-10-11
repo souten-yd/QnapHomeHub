@@ -36,6 +36,14 @@ v0.3.27の明示登録付き同期で、BLE登録・暗号化成功後、同じ�
 
 [OMRONの公式FAQ](https://www.faq.healthcare.omron.co.jp/faq/show/16037?site_domain=jp)は複数人対応の体組成計でユーザーごとにスマートフォンを登録する構成を説明する。ただし、BLE接続元とアプリキーの内部対応、既存キーを別接続元から利用する方法、同じ値の再登録で旧接続元が保持されるかについては規定していない。「8101だから既存キーが壊れた」「1台のホストしか使えない」のどちらも現状の証拠からは断定しない。
 
+### HBF系で報告された通知順序との差
+
+[hass-omronのHBF調査記録（固定版）](https://github.com/eigger/hass-omron/blob/315530315bc09652c4e28f930364f0c8eb21490d/docs/body-composition-scales-notes.md)には、HBF-222T実機で認証前はRX0とunlockだけを購読し、`8100`後にunlockを解除、RX1〜3を順に有効にして通信開始するという観測がある。同記録はHBF-228TをWLC3.0の機種表に含めるが、接続順序の実測対象はHBF-222Tである。従来M5GOは全RXとunlockを認証前に購読しており、この差を既存キーのまま比較できる。資料が報告する症状は通信開始への無応答であり、今回の`8101`と一致する原因とまでは扱わない。
+
+使用中のbleak-esphome 4.1.0 / aioesphomeapi 46.3.0 / ESPHome 2026.9.1ソースでは、`stop_notify()`は通知転送の登録を解除し、ESP32側もローカルの`unregister_for_notify`を呼ぶ。体重計のCCCDをOFFへ書く処理ではない。このため候補では、体重計のCCCDへ`0000`を書き、応答を待ってからローカル購読を解除する。過去の接続でRX1〜3のCCCDが保持される可能性もあるため、BLE認証後・既存キー送信前にこの3本を明示的にOFFへ揃える。
+
+PR #41ではM5GOのHBF専用Sessionだけを変更し、USB Sessionと履歴解析は維持する。38件のPython試験で通知順序、残存CCCD、認証拒否、記述子欠落、CCCD切替失敗、キー登録opcode拒否、USBとの履歴一致を確認した。PR CI/Docker `38151752116`が成功し、main `dccc4f0`へ統合。実HBF-228Tでの解決確認は未実施。新規キー・同一値の再登録・設定EEPROM書込み・BLE識別情報の複製は行わない。
+
 ## 公式資料
 
 - [OMRON HBF-227T/228T/230T共通取扱説明書](https://store.healthcare.omron.co.jp/support/download/manual/pdf/6602384-7D_HBF-230T-SW.pdf): HBF-228Tを対象に含む。初期登録、通常通信、通信設定の削除は別操作。ボタン表示の確認には使えるが、ESP32向けGATT/SMPの実装仕様ではない。

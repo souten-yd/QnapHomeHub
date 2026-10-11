@@ -133,6 +133,14 @@ main CI `38150455024`とDocker公開`38150455019`が成功。タグv0.3.27が検
 
 予約解除、USB、元の自動同期ONへ復帰し、予約pending false、API接続、SelfCare listener ready・busyなし・errorなしを確認。非公開証拠は`secrets/m5go-bond-session-isolated-result.json`と`secrets/v0327-after-registration-listener.json`。監視プロセスは終了している。同じP表示試験は繰り返さない。次はHBF固有のアプリキーと接続元の登録条件を調べる。USBで有効なキーがM5GOでも使えること、同じ値の再登録で既存USB接続を保持できることのいずれも未証明。M5GO履歴取得・通常再接続・新規測定自動保存は未達。
 
+### v0.3.28のHBF通知順序候補
+
+PR #41でM5GO専用のHBF Sessionを追加。認証前はRX0とunlockを購読し、BLE認証後にRX1〜3の残存CCCDをOFFへ揃えてから既存キーを送る。`8100`を確認した場合だけunlockのCCCDをOFFへ書き、ローカル通知転送を解除、RX1〜3を順に有効にして履歴へ進む。各記述子の書込み応答を待つ。認証拒否やCCCD書込み失敗では履歴を開始しない。USB Session・キー・履歴解析・SelfCareは変更しない。
+
+HBF-222Tの実測報告が根拠で、HBF-228Tの`8101`を解消する証拠ではない。使用中のESPHome/bleak-esphomeソースでは通知転送の解除だけでは体重計のCCCDが変わらないため、明示的な記述子書込みを用いる。38件のPython試験、PR CI/Docker `38151752116`、main CI `38151966714`、Docker公開`38151966738`が成功。タグv0.3.28は検証済みmain `dccc4f0`と一致。firmware `02f85bf`は維持する。次の隔離試験はこの通知順序だけを比較し、同じ認証拒否なら停止する。実機履歴取得・通常再接続・新規測定自動保存は未達。PR #36の次候補版はv0.3.29、draftを維持する。
+
+QNAPへのv0.3.28適用が完了し、updater success・busy false、health ok、radio available/running/lowIo true、USB経路、予約pending false、API接続、SelfCare listener ready・busyなし・errorなしを確認した。次の限定監視は`secrets/watch-staged-notify-isolated.py`。v0.3.27の監視から変更したのは版確認と証拠ファイル名だけで、登録付き同期1回・成功時のみ通常同期1回・期限・他ジョブ監視・復帰条件を維持する。新しいP表示のユーザー確認前には登録・履歴処理を実行しない。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。
