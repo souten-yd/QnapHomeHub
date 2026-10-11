@@ -317,14 +317,10 @@ async def operate(request, trace=None):
         if trace is not None:
             trace['stage'] = 'connection'
         agent = await register_agent(address)
-        advert_at = request.get('advert_at')
-        fresh_hbf_watch = (device.get('model') == 'HBF-228T'
-                           and isinstance(advert_at, (int, float)) and not isinstance(advert_at, bool)
-                           and advert_at > 0)
-        # Listener-triggered HBF connections should fail fast enough to catch a
-        # subsequent connectable advertisement. Manual/pairing and other devices
-        # keep the conservative timeout for older QNAP/BlueZ stacks.
-        connection_timeout = 8 if fresh_hbf_watch else 20
+        # Give listener-triggered HBF-228T the same bounded 20-second connection
+        # window already used by manual sync, pairing and other devices. A short
+        # timeout can miss the next connectable advertisement at longer distances.
+        connection_timeout = 20
         client = BleakClient(found, adapter=adapter, timeout=connection_timeout)
         if trace is not None:
             trace['connection_timeout_s'] = connection_timeout
