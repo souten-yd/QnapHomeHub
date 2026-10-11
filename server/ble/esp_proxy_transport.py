@@ -25,6 +25,7 @@ class ProxyConnection:
         self.info = None
         self.diagnostics = {}
         self.unsub = None
+        self.security = None
 
     async def __aenter__(self):
         from aioesphomeapi import BluetoothProxyFeature
@@ -79,6 +80,8 @@ class ProxyConnection:
     async def _on_stop(self, expected):
         self.disconnected.set()
         self.changed.set()
+        if self.security:
+            self.security.changed.set()
         if self.data:
             self.data.bluetooth_device.async_set_unavailable()
             for callback in list(self.data.disconnect_callbacks):
@@ -101,6 +104,26 @@ class ProxyConnection:
         device = BLEDevice(address, adv.name, {
             'source': self.data.bluetooth_device.mac_address, 'address_type': adv.address_type})
         return BleakClient(device, timeout=20, backend=ESPHomeClient, client_data=self.data)
+
+    async def prepare_security(self, trace=None):
+        from aioesphomeapi import TextSensorInfo, TextSensorState
+        from esp_proxy_security import SessionSecurity
+        entities, _ = await asyncio.wait_for(self.api.list_entities_services(), 10)
+        keys = [e.key for e in entities if isinstance(e, TextSensorInfo) and e.name == 'BLE Session']
+        if not keys:
+            # Released firmware predating the opt-in journal retains its behavior.
+            if trace is not None:
+                trace['link_security'] = 'journal_unavailable'
+            return None
+        if len(keys) != 1:
+            raise ValueError('Ambiguous BLE session entity')
+        self.security = SessionSecurity(self.disconnected, trace)
+        def state(value):
+            if isinstance(value, TextSensorState) and value.key == keys[0]:
+                self.security.update(None if value.missing_state else value.state)
+        self.api.subscribe_states(state)
+        await self.security.arm()
+        return self.security
 
     async def subscribe_diagnostics(self, callback):
         from aioesphomeapi import (SensorInfo, SensorState, BinarySensorInfo, BinarySensorState,
