@@ -2,22 +2,32 @@
 
 ## 現在の状態
 
-PR #42のCCCD通知停止修正をv0.3.29として公開・QNAPへ反映済み。mainは `f80421f`。PR CI `38180323995`、main CI `38180494313`、Docker公開 `38180494333` は成功。実Bleakを通す回帰を含む41件のPython試験が成功し、旧処理のValueErrorも再現した。firmwareは `02f85bf` のまま、実験PR #36はdraft・次候補版v0.3.30。
+M5GO経由の履歴取得・通常再接続・新規測定の自動保存は未達。現在、物理操作を待つ試験は起動していない。USB経路・元のHBF自動同期へ復帰し、SelfCare listener ready/busy false/errorなし、登録予約pending falseを確認済み。同じ登録・解除の反復は行わない。
 
-反映後はupdater success/busy false、radio available/running/lowIo true、USB経路、M5GO API接続、登録予約pending false、HBF自動同期ON、SelfCare listener ready/busy false/errorなしを確認。体組成計との認証・履歴取得・自動保存は未達。
+**最新の対照試験:** M5GO登録試験後のUSB通常同期は、再登録・アプリキー書込みなしで `state:done`、既存キー応答 `8100`、履歴通知93件、終了opcode 15、`stage:completed`。93測定という意味ではない。その後、新しい短押し確認でM5GO通常同期を1回実行したが、接続番号7は保存bondありからHCI status 6（PIN or Key Missing）/ GAP97で失敗。アプリキー送信前・履歴通知0件で停止した。USB同期が介在したため、この試験単独では無介入のbond保持失敗と扱わない。
+
+**キーの区別と未検証の前提:** ユーザーから「MACが違うのでM5GOとUSBは別キーでは」と指摘あり。現行実装はSelfCareから渡される同じOmronアプリ認証キーを両経路の `sync_session` で使い、M5GO専用アプリキーを発行・登録していない。一方、BLE bondはUSB側BlueZとM5GO側で別々に作成・保持し、USBのbond鍵をM5GOへコピーしていない。既存アプリキーを別の接続元でも利用できることはHBF-228Tで未確認。接続元への登録・紐付け不足は候補だが、キー値を別にすれば解決することも未確認。USBでの成功が証明するのはUSB経路でのキー有効性まで。
+
+**モードの交絡:** USBの `8100` は通常通信、M5GOの `8101` はP（登録）モード。経路だけを変えた比較ではなく、Pでの拒否からキー失効やMAC紐付けを断定しない。最新の通常M5GO失敗はBLE暗号化段階であり、アプリ認証とは区別する。
+
+PR #42のCCCD通知停止修正をv0.3.29として公開・QNAPへ反映済み。mainは `f80421f`。PR CI `38180323995`、main CI `38180494313`、Docker公開 `38180494333` は成功。実Bleakを通す回帰を含む41件のPython試験が成功。firmwareは `02f85bf`、実験PR #36はdraft・次候補版v0.3.30。
 
 ## 再開後の実測
 
-- 接続番号4：保存bondありからコントローラーstatus 6/GAP97で失敗。アプリキー未送信、終了時bond数0。証拠は `secrets/m5go-staged-notify-isolated-result-preauth-failed-*.json`。
-- 接続番号5：保存bondなしからBLE登録・暗号化成功。その後、Bleak 3がCCCD直接書込みを拒否し `prepare_unlock_notifications` でValueError。アプリキー未送信。切断直前にはbondが残存。証拠は `secrets/m5go-staged-notify-isolated-result.json`。v0.3.29はこのソフトウェア不備を修正したが、修正後の実機試験は未実施。
+- 接続番号4：保存bondありからHCI6/GAP97で失敗。アプリキー未送信、終了時bond数0。
+- 接続番号5：保存bondなしからBLE登録成功。その後Bleak 3がCCCD直接書込みを拒否しValueError。アプリキー未送信。v0.3.29でこのソフトウェア不備を修正。
+- ユーザーの「解除して進めて」でM5GO内のHBF試験bond解除を1回実行。応答は広告購読中のQNAP接続へ送られ操作側ではタイムアウトしたが、次のOPENのbond数0で解除の効果を確認。この1回の承認は消費済み。
+- 接続番号6（v0.3.29、P表示）：BLE登録・暗号化成功、RX1〜3 CCCD OFF応答成功後も既存アプリキー応答 `8101`。履歴未取得。
+- 続くUSB通常同期：既存アプリキーで `8100`、履歴処理・正常終了成功。
+- 接続番号7（v0.3.29、通常短押し）：HCI6/GAP97、アプリキー未送信。USB・元の自動同期へ復帰。
 
 ## 次の操作と確認境界
 
-同じ保存bondの前提でP試験を繰り返さない。M5GO内のHBF向け試験用BLE登録だけを1回解除して初回登録から検証する案を準備した。元の依頼はペアリング削除の自動実行を禁止しているため、**明示承認を得るまで解除しない**。QNAP BlueZの登録・Omronアプリキー・健康記録は変更しない。解除・再試験とも未実行。
+ユーザーの依頼で[USBとの登録比較](M5GO-USB-REGISTRATION-COMPARISON.md)を作成。実コードのオフライン6ケース比較で、USBはOmron登録opcode 2/0と開始・終了、M5GOはBLE登録と既存キーopcode 1のみという差を確認。USBの `Session` 共用案を記録したが、同じキー値の登録でもUSB側の登録保持は未確認であり、製品コードへの登録経路追加・実機再登録は未実施。通知順序だけの再試験や、根拠のないBLE設定変更は行わない。
 
-承認後は現在の状態と稼働ジョブを確認し、対象を限定してM5GOのNative APIによる解除を1回だけ行う。新しいP表示を確認後、v0.3.29で登録付き同期1回、成功条件をすべて満たした場合だけ通常再接続へ進む。限定監視 `secrets/watch-cccd-backend-isolated.py` は作成済み・未起動。結果ファイルは `secrets/m5go-cccd-backend-isolated-result.json` を使用する。過去の「出た」は再利用しない。失敗・期限切れ時は予約解除、USB・元の自動同期へ復帰する。
+追加の物理試験は未設定。接続元の登録とアプリキーの関係を調べ、既存USB認証を保持する要件に照らして次の設計を検討する。既存アプリキーの再発行、BlueZ bond削除、他型番のEEPROM書込み、SelfCareのソース・スキーマ変更は行わない。別キー登録や既存キーの再登録は実施していない。
 
-詳しい結果は [受入記録](M5GO-ACCEPTANCE.md)、非公開の現在地は `secrets/m5go-hardware-acceptance.json`。以下は中断時点の履歴であり、現在の版・次操作には上記を使う。
+非公開証拠：`secrets/m5go-cccd-backend-isolated-result.json`、`secrets/v0329-usb-key-validity-trial.json`、`secrets/m5go-v0329-normal-only-result.json`。復帰確認：`secrets/v0329-normal-restored-listener.json`。非公開の現在地は `secrets/m5go-hardware-acceptance.json`、詳しい結果は [受入記録](M5GO-ACCEPTANCE.md)。以下は中断時点の履歴であり、現在の版・次操作には上記を使う。
 
 ---
 

@@ -149,6 +149,20 @@ QNAPへのv0.3.28適用が完了し、updater success・busy false、health ok�
 
 回帰試験は実Bleak 3.0.2・bleak-esphome 4.1.0・実サービス/記述子モデルを通し、v0.3.28の処理が同じCCCD `ValueError`で失敗することを再現。修正後は既存キー送信前後のCCCD順序、書込み応答待ち、失敗時の通知転送保持、未購読・記述子欠落・切断状態を確認した。全41件のPython試験が成功。Bluetooth通信自体は模擬APIなので、HBF-228Tの認証・履歴取得・自動保存成功とは判定しない。
 
+### v0.3.29の実機試験と通常通信での対照確認
+
+ユーザーの「解除して進めて」を受け、M5GO内のHBF試験bondへの解除要求を1回送信した。別のNative API接続から送ったため、広告購読先のQNAPへ応答を送るESPHome実装により操作側はタイムアウトした。再送せず、次のOPENのbond数0で解除状態を確認した。QNAP BlueZの登録やOmronアプリキーは変更していない。
+
+新しいP表示で接続番号6の登録付き同期を1回実行。BLE暗号化はcontroller status 0/enabled 1、GAP認証成功。v0.3.29のRX1〜3 CCCD OFF書込みも全て応答成功。その後の既存キーopcode 1は`8101`で拒否され、履歴通知0件。したがって通知順序の修正だけでは、このPモードでの拒否を解消しなかった。
+
+ユーザーの指摘により、Pモードと通常通信モードの比較条件を改めた。Pモードの`8101`だけでアプリキーの失効や接続元との紐付けを断定しない。新しい短押し確認後、USB通常同期1回が`done`、`8100`、履歴通知93件、正常終了opcode 15、`stage:completed`で成功。これは93測定という意味ではない。最後のM5GO登録後もUSBで既存キーが有効であることを確認した。
+
+続く新しい短押し確認後、M5GO通常同期を再ペアリングなしで1回実行。接続番号7ではOPEN 1 ms、保存bondあり3 ms、暗号化要求4 ms、controller status 6/enabled 0が53 ms、GAP97が69 ms。通知設定・Omronキー送信・履歴読取り前に失敗した。USB同期がM5GO登録後に介在しているため、今回を無介入のbond保持試験とは扱わない。ただし通常モードでも失敗すること、アプリキーの拒否より前のBLE暗号化が失敗段階であることは確認した。
+
+各試験終了後はUSB経路と元の自動同期ONへ復帰し、最後にAPI接続・予約pending false・SelfCare listener ready/busy false/errorなしを確認。次の物理試験や解除は予約していない。非公開証拠は`secrets/m5go-cccd-backend-isolated-result.json`、`secrets/v0329-usb-key-validity-trial.json`、`secrets/m5go-v0329-normal-only-result.json`。
+
+なおローカルの試験監視に、SelfCareの成功ジョブ状態を`completed`と誤認する不備も見つかった。実APIの成功値`done`へ修正し、成功時のみ次段階へ進むこと、`8101`拒否時の停止・復帰を含む11件の模擬試験が成功。今回の実機ジョブは実際に`failed`であり、この監視不備が認証失敗の原因ではない。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。
