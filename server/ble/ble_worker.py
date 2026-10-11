@@ -174,6 +174,22 @@ class Session:
         return {"records": records, "invalid_records": invalid}
 
 
+async def sync_session(session, request, trace=None):
+    """Shared read-only history transaction for USB and remote GATT clients."""
+    device = request["device"]
+    key = request.get("key")
+    if not key:
+        raise ValueError("先にペアリングしてください")
+    await session.unlock(1, bytes.fromhex(key), 0x81)
+    await session.request(0, length=16)
+    result = await session.records(device)
+    await session.request(15)
+    if trace is not None:
+        trace['stage'] = 'completed'
+        result['diagnostic'] = trace
+    return result
+
+
 async def register_agent(address):
     from dbus_fast import BusType, DBusError
     from dbus_fast.aio import MessageBus
@@ -360,17 +376,7 @@ async def operate(request, trace=None):
                 if trace is not None:
                     trace['stage'] = 'completed'
                 return {"paired": True, **({'diagnostic': trace} if trace is not None else {})}
-            key = request.get("key")
-            if not key:
-                raise ValueError("先にペアリングしてください")
-            await session.unlock(1, bytes.fromhex(key), 0x81)
-            await session.request(0, length=16)
-            result = await session.records(device)
-            await session.request(15)
-            if trace is not None:
-                trace['stage'] = 'completed'
-                result['diagnostic'] = trace
-            return result
+            return await sync_session(session, request, trace)
         finally:
             await client.disconnect()
     finally:

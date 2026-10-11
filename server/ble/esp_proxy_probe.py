@@ -45,39 +45,9 @@ def parse_args(argv=None):
 
 
 async def probe(host, target, scan_seconds, connect, psk):
-    try:
-        import bleak
-        import habluetooth
-        from bleak_esphome import APIConnectionManager
-    except ImportError as exc:
-        raise RuntimeError("Isolated ESPHome proxy Python environment is missing") from exc
-
-    output = {"schema": 1, "mode": "read-only",
-              "target": masked_mac(target) if target else None,
-              "api_connected": False, "advertisement_seen": False,
-              "gatt_connected": False, "omron_service_found": False}
-    await habluetooth.BluetoothManager().async_setup()
-    manager = APIConnectionManager({"address": host, "noise_psk": psk})
-    try:
-        await asyncio.wait_for(manager.start(), timeout=20)
-        output["api_connected"] = True
-        observations = await bleak.BleakScanner.discover(timeout=scan_seconds, return_adv=True)
-        if target:
-            matched = next(((dev, adv) for dev, adv in observations.values()
-                            if dev.address.upper() == target), None)
-            if matched:
-                device, adv = matched
-                output["advertisement_seen"] = True
-                output["rssi"] = adv.rssi
-                if connect:
-                    async with bleak.BleakClient(device, timeout=20) as client:
-                        output["gatt_connected"] = bool(client.is_connected)
-                        output["omron_service_found"] = client.services.get_service(OMRON_SERVICE) is not None
-        else:
-            output["devices_seen"] = len(observations)
-        return output
-    finally:
-        await manager.stop()
+    from esp_proxy_worker import operate
+    return await operate({'action': 'probe', 'proxy': {'host': host, 'noise_psk': psk},
+                          'target': target, 'scan_seconds': scan_seconds, 'connect': connect})
 
 
 def main(argv=None):
