@@ -1,5 +1,7 @@
 # Web管理画面からradio停止・省書き込み起動
 
+> **重要**: Dockerのradioログ無効化とtmpfs設定だけでは、QNAPホストの`bluetoothd`による大量書き込みは止まりません。2026-10-11の実機検証に基づく[QNAP標準Bluetooth二重起動の検出・永続起動抑制・再起動後検証・ロールバック](QNAP-HOST-BLUEZ-LOW-IO-RUNBOOK.md)を先に確認してください。HomeHubはQNAPホストのプロセスを自動停止しません。
+
 QnapHomeHub Docker v0.3.16から、管理画面に **Bluetooth radio 管理** を追加。
 操作は認証済みWeb→内部トークン付きupdater（127.0.0.1:8788）→Docker APIに限定する。
 WebコンテナにDockerソケットは渡さない。
