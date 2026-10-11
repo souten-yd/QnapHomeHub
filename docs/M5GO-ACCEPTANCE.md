@@ -87,6 +87,14 @@ USBは対象機器に限定した`NoInputNoOutput` Agentを登録し、BlueZ接�
 
 PR #39を統合し、27件のPython試験、PR/main CI、Docker publishが成功。v0.3.26をQNAPへ反映し、healthの版・radio稼働・低I/O設定・SelfCare listener readyを確認した。firmware候補`c86bf58`の暗号化OTAと、実機Native APIの登録準備・解除の応答確認が成功。このAPI確認では体組成計へ接続していない。修正後の明示登録と通常再接続は引き続き未検証。
 
+### v0.3.26での連続した登録・通常再接続
+
+23:41 JSTの明示登録は`bonded:true`、`application_key_changed:false`で成功。HBF自動同期OFFとM5GO経路を維持したまま、ユーザーの電源OFF・15秒待機・短押し確認後、23:42:38〜23:42:45 JSTに通常同期を1回だけ実行した。監視は登録から同期終了まで別HBFジョブや設定変更を検出せず、`isolation_verified:true`を記録した。
+
+結果は`authentication_failed`。接続番号2の記録はOPEN成功（1 ms）、保存bond確認（3 ms、mask 3・鍵長16・public・IRK/EDIV/RAND非ゼロ）、暗号化要求（4 ms）、認証97（102 ms）、bond数0（753 ms）、ローカル切断22（754 ms）。RSSIは-76 dBm。CCCD・Omronキー送信・履歴読取りに到達せず、履歴通知0件。**USB同期が途中に入らなくても、保存bondを使う暗号化再開の失敗を再現した。** 全ゼロIRKや単純なキー未保存の前提にも合わないが、保存鍵の内容が相手の保持鍵と一致することまでは検証していない。
+
+USB経路と元のHBF自動同期に復帰し、SelfCare listener ready・busyなし・errorなしを確認した。以後の接続・登録・同期を予約していない。M5GOでの履歴取得と新規測定の自動保存は未達。次の観測には認証97へ変換される前のコントローラー側ステータスが必要で、同じ操作を同じ診断のまま繰り返さない。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。
