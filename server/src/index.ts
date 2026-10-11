@@ -94,7 +94,7 @@ async function updaterRequest(endpoint: string, init: RequestInit = {}): Promise
       'x-homehub-internal-token': internalToken,
       ...(init.headers ?? {}),
     },
-    signal: AbortSignal.timeout(endpoint === '/status' ? 2500 : 15000),
+    signal: AbortSignal.timeout(endpoint === '/status' ? 2500 : endpoint === '/radio/mode' ? 120000 : 15000),
   });
   const text = await response.text();
   let body: unknown = {};
