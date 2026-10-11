@@ -63,6 +63,8 @@ class Peripheral:
         opcode, address, length = data[1], int.from_bytes(data[3:5], 'big'), data[5]
         if self.fail == 'read' and opcode == 1:
             raise ConnectionError('lost API')
+        if self.fail == 'close' and opcode == 15:
+            raise ConnectionError('lost close response')
         payload = measurement() if opcode == 1 and address in (0x2c0, 0xe60) else bytes(length if opcode == 1 else 0)
         frame = bytes([8 + len(payload), opcode | 0x80, 0, data[3], data[4], len(payload)]) + payload + b'\0'
         frame += bytes([protocol.checksum(frame)])
@@ -259,6 +261,82 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(adv['fingerprint']), 24)
         self.assertFalse(events[-1]['api_connected'])
         self.assertTrue(self.remote.closed)
+
+    async def bond_session_gate(self):
+        from unittest.mock import AsyncMock, Mock
+        gate = SimpleNamespace(connected=AsyncMock(), authenticated=AsyncMock(), mark=Mock())
+        self.remote.prepare_security = AsyncMock(return_value=gate)
+        self.remote.prepare_bond = AsyncMock()
+        self.request['bond_session'] = True
+        return gate
+
+    async def test_bond_and_existing_key_history_share_one_connection(self):
+        gate = await self.bond_session_gate()
+        from unittest.mock import AsyncMock
+        self.client.connect = AsyncMock(wraps=self.client.connect)
+        async def authenticated():
+            self.assertEqual(self.client.writes, [])
+            self.assertEqual(self.client.bonds, 1)
+        gate.authenticated.side_effect = authenticated
+        trace = {'slots': [], 'rx_notifications': 0}
+        result = await operate(self.request, trace, self.remote.factory)
+        self.client.connect.assert_awaited_once()
+        gate.connected.assert_awaited_once_with(require_bond=False)
+        self.remote.prepare_bond.assert_awaited_once_with(ADDRESS)
+        self.assertEqual(self.client.bonds, 1)
+        self.assertEqual([data for char, data in self.client.writes if char == protocol.UNLOCK],
+                         [b'\x01' + bytes.fromhex(REQUEST['key'])])
+        self.assertEqual([data[1] for char, data in self.client.writes if char != protocol.UNLOCK],
+                         [0] + [1] * 60 + [15])
+        self.assertEqual(len(result['records']), 2)
+        self.assertTrue(result['diagnostic']['explicit_bond_session'])
+        self.assertEqual(trace['stage'], 'completed')
+        self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_bond_session_missing_gate_or_failed_auth_never_sends_key(self):
+        from unittest.mock import AsyncMock
+        from esp_proxy_security import LinkSecurityError
+        self.request['bond_session'] = True
+        self.client.connect = AsyncMock()
+        with self.assertRaisesRegex(ValueError, 'security diagnostics'):
+            await operate(self.request, {}, self.remote.factory)
+        self.client.connect.assert_not_called()
+        gate = await self.bond_session_gate()
+        gate.authenticated.side_effect = LinkSecurityError('authentication_failed')
+        with self.assertRaises(LinkSecurityError):
+            await operate(self.request, {}, self.remote.factory)
+        self.assertEqual(self.client.writes, [])
+        self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_bond_session_unlock_rejection_never_reprograms_or_retries(self):
+        await self.bond_session_gate()
+        self.client.fail = 'auth'
+        with self.assertRaises(ValueError):
+            await operate(self.request, {}, self.remote.factory)
+        self.assertEqual(self.client.bonds, 1)
+        self.assertEqual(self.client.writes, [(protocol.UNLOCK, b'\x01' + bytes.fromhex(REQUEST['key']))])
+        self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_bond_session_close_failure_is_not_reported_as_success(self):
+        await self.bond_session_gate()
+        self.client.fail = 'close'
+        trace = {'slots': [], 'rx_notifications': 0}
+        with self.assertRaises(ConnectionError):
+            await operate(self.request, trace, self.remote.factory)
+        self.assertNotEqual(trace['stage'], 'completed')
+        self.assertEqual(self.client.bonds, 1)
+        self.assertEqual(sum(char != protocol.UNLOCK and data[1] == 15 for char, data in self.client.writes), 1)
+        self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_bond_session_cannot_bypass_existing_key_validation(self):
+        from unittest.mock import Mock
+        factory = Mock()
+        for action, flag, key in [('bond', True, REQUEST['key']), ('sync', 'true', REQUEST['key']), ('sync', True, '')]:
+            with self.subTest(action=action, flag=flag, key_present=bool(key)):
+                self.request.update(action=action, bond_session=flag, key=key)
+                with self.assertRaises(ValueError):
+                    await operate(self.request, {}, factory)
+        factory.assert_not_called()
 
     async def test_reject_hem_and_key_programming(self):
         for patch_value in ({'action': 'pair'}, {'device': {**REQUEST['device'], 'model': 'HEM-6232T'}}, {'key': ''}):
