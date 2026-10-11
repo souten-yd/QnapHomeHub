@@ -19,6 +19,8 @@ external_components:
 
 # Only peers already bonded through the explicit management action are eligible.
 known_bond_security:
+  diagnostic:
+    name: BLE Security
 
 wifi:
   ssid: !secret wifi_ssid
