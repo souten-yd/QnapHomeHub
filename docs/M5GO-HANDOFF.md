@@ -1,3 +1,26 @@
+# M5GO作業の引継ぎ（2026-10-12 JST 再開後）
+
+## 現在の状態
+
+PR #42のCCCD通知停止修正をv0.3.29として公開・QNAPへ反映済み。mainは `f80421f`。PR CI `38180323995`、main CI `38180494313`、Docker公開 `38180494333` は成功。実Bleakを通す回帰を含む41件のPython試験が成功し、旧処理のValueErrorも再現した。firmwareは `02f85bf` のまま、実験PR #36はdraft・次候補版v0.3.30。
+
+反映後はupdater success/busy false、radio available/running/lowIo true、USB経路、M5GO API接続、登録予約pending false、HBF自動同期ON、SelfCare listener ready/busy false/errorなしを確認。体組成計との認証・履歴取得・自動保存は未達。
+
+## 再開後の実測
+
+- 接続番号4：保存bondありからコントローラーstatus 6/GAP97で失敗。アプリキー未送信、終了時bond数0。証拠は `secrets/m5go-staged-notify-isolated-result-preauth-failed-*.json`。
+- 接続番号5：保存bondなしからBLE登録・暗号化成功。その後、Bleak 3がCCCD直接書込みを拒否し `prepare_unlock_notifications` でValueError。アプリキー未送信。切断直前にはbondが残存。証拠は `secrets/m5go-staged-notify-isolated-result.json`。v0.3.29はこのソフトウェア不備を修正したが、修正後の実機試験は未実施。
+
+## 次の操作と確認境界
+
+同じ保存bondの前提でP試験を繰り返さない。M5GO内のHBF向け試験用BLE登録だけを1回解除して初回登録から検証する案を準備した。元の依頼はペアリング削除の自動実行を禁止しているため、**明示承認を得るまで解除しない**。QNAP BlueZの登録・Omronアプリキー・健康記録は変更しない。解除・再試験とも未実行。
+
+承認後は現在の状態と稼働ジョブを確認し、対象を限定してM5GOのNative APIによる解除を1回だけ行う。新しいP表示を確認後、v0.3.29で登録付き同期1回、成功条件をすべて満たした場合だけ通常再接続へ進む。限定監視 `secrets/watch-cccd-backend-isolated.py` は作成済み・未起動。結果ファイルは `secrets/m5go-cccd-backend-isolated-result.json` を使用する。過去の「出た」は再利用しない。失敗・期限切れ時は予約解除、USB・元の自動同期へ復帰する。
+
+詳しい結果は [受入記録](M5GO-ACCEPTANCE.md)、非公開の現在地は `secrets/m5go-hardware-acceptance.json`。以下は中断時点の履歴であり、現在の版・次操作には上記を使う。
+
+---
+
 # M5GO作業の中断記録（2026-10-12 JST）
 
 ユーザーの「今日は一旦やめるから、記録とって停止して」により中断。M5GO経由の履歴取得・通常再接続・新規測定の自動保存は未達。
