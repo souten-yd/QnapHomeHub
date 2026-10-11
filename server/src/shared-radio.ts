@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ProxyConfigStore, publicProxyConfig } from './proxy-config.js';
 import { RadioArbiter } from './radio-arbiter.js';
 import type { AppConfig, DiscoveredDevice } from './types.js';
 
@@ -23,6 +24,16 @@ export async function stopProcess(child: ChildProcess | undefined): Promise<void
 }
 
 export class SharedRadioManager {
+  private readonly proxyStore: ProxyConfigStore;
+  private proxyWatcher?: ChildProcess;
+  private proxyStarting?: Promise<void>;
+  private proxyReady = false;
+  private proxyError?: string;
+  private proxyNextStart = 0;
+  private proxyFailures = 0;
+  private proxyDiagnostics: Record<string, unknown> = {};
+  private proxyPairingSupported?: boolean;
+  private proxyLastSync?: Record<string, unknown>;
   private rawWorker?: ChildProcess;
   private bluez?: ChildProcess;
   private pythonWorker?: ChildProcess;
@@ -43,7 +54,8 @@ export class SharedRadioManager {
   private readonly hostBlueZ = process.env.HOMEHUB_BLUEZ_MODE === 'host';
 
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
-    private readonly secret: string, private readonly debug?: Debug) {
+    private readonly secret: string, private readonly debug?: Debug, proxyDirectory = '/radio') {
+    this.proxyStore = new ProxyConfigStore(proxyDirectory);
     this.arbiter = new RadioArbiter({
       stopHomeHub: request => this.stopHomeHub(request), stopBlueZ: () => this.stopBlueZ(),
       resumeSelfCare: () => this.startBlueZ(),
@@ -69,6 +81,7 @@ export class SharedRadioManager {
   private preserveWatcherForSelfCare(request?: unknown): boolean {
     if (!request || typeof request !== 'object') return false;
     const value = request as { action?: unknown; advert_at?: unknown; device?: { model?: unknown } };
+    if (this.usesProxy(request)) return false;
     return value.action === 'sync' && value.device?.model === 'HBF-228T' &&
       typeof value.advert_at === 'number' && Number.isFinite(value.advert_at) && value.advert_at > 0;
   }
@@ -86,6 +99,7 @@ export class SharedRadioManager {
   }
 
   private async stopWatcher(): Promise<void> {
+    await this.stopProxyWatcher();
     await this.watchStarting;
     await stopProcess(this.watcher);
     this.watcher = undefined;
@@ -94,14 +108,18 @@ export class SharedRadioManager {
 
   private async maintainWatch(): Promise<void> {
     if (this.closing || this.arbiter.status().active !== 'idle' || this.arbiter.status().pending) return;
-    if (Date.now() > this.watchLease || !this.watchAddresses.length) {
-      await this.stopWatcher();
+    await this.maintainProxyWatch();
+    if (this.closing || this.arbiter.status().active !== 'idle' || this.arbiter.status().pending) return;
+    const usbAddresses = this.usbWatchAddresses();
+    if (Date.now() > this.watchLease || !usbAddresses.length) {
+      await stopProcess(this.watcher);
+      this.watcher = undefined; this.watchReady = false;
       return;
     }
     if (this.watcher || this.watchStarting) return;
     this.watchStarting = (async () => {
       await this.startBlueZ();
-      if (this.closing || Date.now() > this.watchLease || !this.watchAddresses.length) return;
+      if (this.closing || this.arbiter.status().active !== 'idle' || this.arbiter.status().pending || Date.now() > this.watchLease || !usbAddresses.length) return;
       const child = spawn('/opt/ble/bin/python', ['/app/ble/ble_watch.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
       this.watcher = child;
       let buffer = '';
@@ -132,7 +150,7 @@ export class SharedRadioManager {
         if (this.watcher === child) { this.watcher = undefined; this.watchReady = false; }
         if (code && !signal) this.watchError = 'Bluetooth listener exited; retrying';
       });
-      child.stdin!.end(JSON.stringify({ adapter: `hci${this.getConfig().hciDeviceId}`, addresses: this.watchAddresses }) + '\n');
+      child.stdin!.end(JSON.stringify({ adapter: `hci${this.getConfig().hciDeviceId}`, addresses: usbAddresses }) + '\n');
     })();
     try { await this.watchStarting; }
     catch (error) { this.watchError = (error as Error).message; }
@@ -150,9 +168,136 @@ export class SharedRadioManager {
       await this.stopWatcher();
     }
     this.watchLease = addresses.length ? Date.now() + 60000 : 0;
-    return { supported: true, ready: this.watchReady, error: this.watchError,
+    return { supported: true, ready: this.combinedWatchReady(), error: this.watchError || this.proxyWatchError(),
       events: [...this.watchSeen].filter(([, event]) => Date.now() - event.at < 15000)
         .map(([address, event]) => ({ address, ...event })) };
+  }
+
+  private usesProxy(request: any): boolean {
+    const config = this.proxyStore.get();
+    return config.route === 'm5go' && request?.device?.model === 'HBF-228T' &&
+      typeof request.device.address === 'string' && request.device.address.toUpperCase() === config.target;
+  }
+
+  private usbWatchAddresses(): string[] {
+    const config = this.proxyStore.get();
+    return this.watchAddresses.filter(address => config.route !== 'm5go' || address !== config.target);
+  }
+
+  private proxyWatchError(): string | undefined {
+    const config = this.proxyStore.get();
+    return config.route === 'm5go' && this.watchAddresses.includes(config.target) ? this.proxyError : undefined;
+  }
+
+  private combinedWatchReady(): boolean {
+    const config = this.proxyStore.get();
+    return (!this.usbWatchAddresses().length || this.watchReady) &&
+      (config.route !== 'm5go' || !this.watchAddresses.includes(config.target) || this.proxyReady);
+  }
+
+  private proxyStatus() {
+    return { ...publicProxyConfig(this.proxyStore.get()), apiConnected: this.proxyReady,
+      error: this.proxyError, pairingSupported: this.proxyPairingSupported,
+      advertisement: this.watchSeen.get(this.proxyStore.get().target),
+      diagnostics: this.proxyDiagnostics, lastSync: this.proxyLastSync };
+  }
+
+  private proxyRequestConfig() {
+    const config = this.proxyStore.get();
+    return { host: config.host, noise_psk: config.noisePsk };
+  }
+
+  private async stopProxyWatcher(): Promise<void> {
+    await this.proxyStarting;
+    const child = this.proxyWatcher;
+    if (!child) return;
+    await stopProcess(child);
+    if (this.proxyWatcher === child) this.proxyWatcher = undefined;
+    this.proxyReady = false;
+  }
+
+  private async maintainProxyWatch(): Promise<void> {
+    const config = this.proxyStore.get();
+    if (!config.host || !config.noisePsk || this.proxyWatcher || this.proxyStarting || Date.now() < this.proxyNextStart) return;
+    this.proxyStarting = (async () => {
+      const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_proxy_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      this.proxyWatcher = child;
+      let buffer = '';
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', chunk => {
+        buffer += chunk;
+        if (buffer.length > 65536) { child.kill('SIGTERM'); return; }
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          try {
+            const event = JSON.parse(line);
+            if (typeof event.ready === 'boolean') this.proxyReady = event.ready;
+            if (event.ready === true) { this.proxyError = undefined; this.proxyFailures = 0; }
+            if (typeof event.error === 'string') this.proxyError = event.error.slice(0, 160);
+            if (typeof event.pairing_supported === 'boolean') this.proxyPairingSupported = event.pairing_supported;
+            if (event.diagnostics && typeof event.diagnostics === 'object') this.proxyDiagnostics = event.diagnostics;
+            if (config.route === 'm5go' && event.address === config.target && this.watchAddresses.includes(event.address) && Date.now() < this.watchLease) {
+              this.watchSeen.set(event.address, { at: Date.now(), fingerprint: event.fingerprint,
+                rssi: event.rssi, advertisement: event.advertisement });
+            }
+          } catch { this.proxyError = 'Invalid M5GO listener response'; }
+        }
+      });
+      const failed = () => {
+        if (this.proxyWatcher !== child) return;
+        this.proxyWatcher = undefined; this.proxyReady = false;
+        // Only reconnect API transport. No timer retries GATT/auth/history.
+        this.proxyNextStart = Date.now() + Math.min(60000, 2000 * 2 ** Math.min(++this.proxyFailures, 5));
+      };
+      child.once('error', () => { this.proxyError = 'M5GO worker unavailable'; failed(); });
+      child.once('exit', () => { failed(); });
+      child.stdin!.on('error', () => { this.proxyError = 'M5GO worker input failed'; });
+      child.stdin!.end(JSON.stringify({ action: 'watch', proxy: this.proxyRequestConfig(),
+        addresses: config.route === 'm5go' ? [config.target] : [] }) + '\n');
+    })();
+    try { await this.proxyStarting; }
+    finally { this.proxyStarting = undefined; }
+  }
+
+  private async proxyOperation<T>(request: any): Promise<T> {
+    if (request.action === 'proxy-config') {
+      await this.proxyStore.update(request.patch);
+      this.proxyReady = false; this.proxyError = undefined; this.proxyDiagnostics = {};
+      this.proxyNextStart = 0; this.proxyFailures = 0; this.watchSeen.clear();
+      return this.proxyStatus() as T;
+    }
+    const config = this.proxyStore.get();
+    if (!config.host || !config.noisePsk) throw new Error('M5GO host and API key are required');
+    let payload: any;
+    if (request.action === 'proxy-probe') payload = { action: 'probe', target: config.target || undefined, connect: request.connect === true };
+    else if (request.action === 'proxy-bond') {
+      if (request.confirm !== 'bond-hbf-228t' || !config.target) throw new Error('Explicit HBF-228T BLE bond confirmation is required');
+      payload = { action: 'bond', device: { address: config.target, model: 'HBF-228T' } };
+    } else {
+      if (request.action !== 'sync') throw new Error('M5GO uses the existing Omron key; application pairing must use USB');
+      payload = request;
+    }
+    payload = { ...payload, proxy: this.proxyRequestConfig() };
+    const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_proxy_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    this.pythonWorker = child;
+    try {
+      const result = await this.pythonResult<T>(child, payload);
+      this.proxyError = undefined;
+      if (request.action === 'sync') {
+        const value = result as any;
+        this.proxyLastSync = { at: new Date().toISOString(), success: true,
+          records: Array.isArray(value.records) ? value.records.length : 0, invalidRecords: value.invalid_records };
+      }
+      return result;
+    } catch (error) {
+      this.proxyError = (error as Error).message;
+      if (request.action === 'sync') this.proxyLastSync = { at: new Date().toISOString(), success: false, error: this.proxyError };
+      throw error;
+    } finally {
+      await stopProcess(child); this.pythonWorker = undefined;
+      this.proxyNextStart = 0;
+    }
   }
 
   private async callRaw<T>(request: any): Promise<T> {
@@ -214,8 +359,10 @@ export class SharedRadioManager {
   }
 
   private async callSelfCare<T>(request: any): Promise<T> {
+    if (['proxy-config', 'proxy-probe', 'proxy-bond'].includes(request?.action)) return this.proxyOperation<T>(request);
     if (!['scan', 'pair', 'sync'].includes(request?.action)) throw new Error('Unknown SelfCare Bluetooth operation');
     if (request.adapter !== `hci${this.getConfig().hciDeviceId}`) throw new Error('SelfCare adapter must match the HomeHub HCI setting');
+    if (this.usesProxy(request)) return this.proxyOperation<T>(request);
     const watchPreserved = this.preserveWatcherForSelfCare(request) && Boolean(this.watcher);
     this.debug?.('info', 'radio', 'USB Bluetooth ownership transferred to SelfCare',
       { action: request.action, adapter: request.adapter, watchPreserved });
@@ -290,16 +437,22 @@ export class SharedRadioManager {
   }
 
   async listen(socketPath = '/radio/ble.sock'): Promise<void> {
+    await this.proxyStore.load();
     await fs.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
     await fs.rm(socketPath, { force: true });
     this.socketServer = http.createServer(async (req, res) => {
       const reply = (status: number, value: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)); };
       try {
-        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, bluezMode: this.hostBlueZ ? 'host' : 'private', watchSupported: true, watchReady: this.watchReady, watchError: this.watchError, ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
-        if (req.method !== 'POST' || !['/run', '/homehub', '/watch'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
+        if (req.method === 'GET' && req.url === '/health') return reply(200, { mode: 'homehub', shared: true, preferredOwner: 'selfcare', bridge: true, bleak: true, dbus: true, bluezError: this.bluezError, bluezMode: this.hostBlueZ ? 'host' : 'private', watchSupported: true, watchReady: this.combinedWatchReady(), watchError: this.watchError || this.proxyWatchError(), m5go: this.proxyStatus(), ...this.arbiter.status(), adapter: `hci${this.getConfig().hciDeviceId}` });
+        if (req.method !== 'POST' || !['/run', '/homehub', '/watch', '/proxy'].includes(req.url ?? '')) return reply(404, { error: 'Unknown route' });
         let body = '';
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }
         const request = JSON.parse(body);
+        if (req.url === '/proxy') {
+          if (request.action === 'status') return reply(200, this.proxyStatus());
+          if (!['config', 'probe', 'bond'].includes(request.action)) throw new Error('Unknown proxy operation');
+          return reply(200, await this.arbiter.run('selfcare', { ...request, action: 'proxy-' + request.action }));
+        }
         if (req.url === '/watch') return reply(200, await this.configureWatch(request));
         if (req.url === '/homehub') {
           if (request.action === 'scan') return reply(200, await this.scan(Math.min(60000, Math.max(3000, Number(request.timeoutMs) || this.getConfig().scanTimeoutMs))));

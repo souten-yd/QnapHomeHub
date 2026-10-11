@@ -16,6 +16,7 @@ jobs:
       - run: node --check server/public/app.js
       - run: node --check server/public/control.js
       - run: node --check server/public/update.js
+      - run: node --check server/public/m5go.js
       - run: node --check updater/app.mjs
       - run: node --check updater/radio-control.mjs
       - run: node --check updater/updater-handover.mjs
@@ -108,6 +109,15 @@ jobs:
           curl -fsS http://127.0.0.1:8787/ | grep -q '/control.js'
           curl -fsS http://127.0.0.1:8787/manage.html | grep -q 'SYSTEM UPDATE'
           curl -fsS http://127.0.0.1:8787/manage.html | grep -q '/app.js'
+      - name: Verify M5GO authenticated Web management
+        run: node scripts/check-m5go-web.mjs
+      - name: Verify M5GO settings survive Docker restart and USB rollback
+        run: |
+          docker cp scripts/check-m5go-radio.mjs radio-ci:/app/check-m5go-radio.mjs
+          docker exec radio-ci node /app/check-m5go-radio.mjs configure
+          docker restart radio-ci
+          docker exec radio-ci node /app/check-m5go-radio.mjs restored
+          docker exec radio-ci node /app/check-m5go-radio.mjs rollback
       - uses: docker/build-push-action@v6
         with:
           context: .

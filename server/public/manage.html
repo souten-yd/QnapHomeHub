@@ -70,6 +70,33 @@
         <p id="radioControlMessage" class="meta" role="status">状態を確認してください。省書き込み起動はradioのみを再作成し、一時的にBluetooth同期を中断します。Docker版更新サービスの新バージョンが必要です。</p>
       </section>
 
+      <section class="card" id="m5goPanel">
+        <div class="sectionHead"><div><div class="sectionLabel">M5GO BLUETOOTH PROXY</div><h2>M5GO Bluetooth Proxy</h2><p>初代M5GOを体組成計の近くに置き、HBF-228Tの同期経路を選択します。初期値はUSBです。</p></div><span id="m5goState" class="pill">未確認</span></div>
+        <form id="m5goForm">
+          <label>M5GOのIP / ホスト名<input id="m5goHost" maxlength="253" placeholder="192.168.1.28" autocomplete="off" /></label>
+          <label>Native API暗号鍵<input id="m5goKey" type="password" autocomplete="new-password" placeholder="登録済みの場合は空欄で維持" /></label>
+          <label>HBF-228TのMACアドレス<input id="m5goTarget" placeholder="AA:BB:CC:11:22:33" maxlength="17" autocomplete="off" /></label>
+          <label>HBF-228Tの同期経路<select id="m5goRoute"><option value="usb">USB Bluetooth（既定）</option><option value="m5go">M5GO</option></select></label>
+          <p class="meta">保存後、選択した機器だけに適用します。SelfCareの既存ペアリングキーとユーザー設定が必要です。血圧計とSwitchBotはUSBを継続します。</p>
+          <div class="actions"><button type="submit">設定を保存</button><button type="button" id="m5goRollback" class="secondary">USBへ切り戻す</button></div>
+        </form>
+        <div class="actions">
+          <button type="button" id="m5goRefresh" class="secondary">接続状態を更新</button>
+          <button type="button" id="m5goProbe" class="secondary">API / 広告を検査</button>
+          <button type="button" id="m5goGatt" class="secondary">GATT接続を検査</button>
+        </div>
+        <p id="m5goMessage" role="status" class="meta">M5GOの設定を保存し、機器が広告中に接続テストを実行してください。</p>
+        <div class="debugStatusGrid">
+          <div class="miniCard"><span>LAST SYNC</span><strong id="m5goSync">未実行</strong></div>
+          <div class="miniCard"><span>BLE RSSI</span><strong id="m5goRssi">未検出</strong></div>
+        </div>
+        <pre id="m5goDiagnostics" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+        <details><summary>BLE bondingの診断</summary><p>BlueZのbondはM5GOへ引き継がれません。通常同期ではbondやOmronキーを再作成しません。認証前にBLEリンクの暗号化が必要な場合に限り、機器を操作できる状態で実行してください。Omronキーは変更しません。</p>
+          <label class="check"><input id="m5goBondConfirm" type="checkbox" /> 対象はHBF-228Tで、M5GOとのBLE bondを作成する</label>
+          <button type="button" id="m5goBond" class="secondary">BLE bondを作成</button>
+        </details>
+      </section>
+
       <section class="card hero accentCard"><div><div class="sectionLabel">BLE GATEWAY</div><h2>1. Bluetooth</h2><p>USBドングルからSwitchBotを探します。共通radioサービス利用時はSelfCareと順番に操作します。</p><p id="radioStatus">Bluetooth管理状態を確認中</p></div><button id="scan">Bluetoothをスキャン</button></section>
       <section class="card"><div class="sectionHead"><div><div class="sectionLabel">DISCOVERY</div><h2>検出したデバイス</h2></div></div><div id="discovered" class="grid empty">まだスキャンしていません。</div></section>
       <section class="card"><div class="sectionHead"><div><div class="sectionLabel">DEVICES</div><h2>登録済み</h2></div></div><div id="registered" class="grid empty">登録デバイスなし</div></section>
@@ -120,5 +147,6 @@
   <template id="registeredTpl"><article class="deviceCard"><div class="row"><h3></h3><span class="pill matter"></span></div><p class="meta"></p><div class="actions commandActions"><button data-action="press">押す</button><button data-action="power" class="hidden">起動</button><button data-action="forceOff" class="danger hidden">強制終了</button><button data-action="on">ON</button><button data-action="off">OFF</button><button data-action="status" class="secondary">状態</button></div><div class="commandFeedback idle">待機中</div><pre class="result hidden"></pre><div class="actions"><button class="toggleMatter secondary">Matter切替</button><button class="remove danger">削除</button></div><details class="deviceSettings"><summary>デバイス設定</summary><label>表示名<input class="editName" /></label><label>Botモード<select class="editMode"><option value="press">Press</option><option value="switch">Switch</option></select></label><label>用途<select class="editControlProfile"><option value="standard">標準</option><option value="pc-power">PC電源ボタン</option></select></label><label class="forceHoldField">強制終了の長押し秒数<input class="editForceHoldSeconds" type="number" min="3" max="30" step="1" /></label><p class="pcPowerNote hidden">PC電源プロファイルでは「起動」は通常の短押し、「強制終了」は指定秒数の長押しです。Matter ON時は「&lt;表示名&gt; 強制終了」も別のMatterデバイスとして公開します。</p><label>Matter公開形式<select class="editMatterType"><option value="outlet">Outlet（Alexa推奨）</option><option value="light">Light</option></select></label><button class="saveDevice">設定を保存</button></details></article></template>
   <script type="module" src="/app.js"></script>
   <script type="module" src="/update.js"></script>
+  <script type="module" src="/m5go.js"></script>
 </body>
 </html>

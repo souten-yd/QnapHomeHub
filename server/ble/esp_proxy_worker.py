@@ -15,35 +15,39 @@ from esp_proxy_probe import normalize_mac, masked_mac
 from esp_proxy_transport import ProxyConnection
 
 
+class ProxyInputError(ValueError):
+    """Operator-safe messages from our own validation; never raw dependency errors."""
+
+
 def validate(request):
     if request.get('action') not in ('probe', 'sync', 'bond', 'watch'):
-        raise ValueError('Unsupported M5GO operation')
+        raise ProxyInputError('Unsupported M5GO operation')
     proxy = request['proxy']
     host = proxy.get('host', '')
     if not isinstance(host, str) or not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,253}', host):
-        raise ValueError('Invalid proxy host')
+        raise ProxyInputError('Invalid proxy host')
     psk = proxy.get('noise_psk', '')
     try:
         if len(base64.b64decode(psk, validate=True)) != 32:
-            raise ValueError()
+            raise ProxyInputError()
     except Exception:
-        raise ValueError('Invalid proxy encryption key') from None
+        raise ProxyInputError('Invalid proxy encryption key') from None
     if request['action'] in ('sync', 'bond'):
         device = request['device']
         if device.get('model') != 'HBF-228T':
-            raise ValueError('M5GO route only supports HBF-228T')
+            raise ProxyInputError('M5GO route only supports HBF-228T')
         normalize_mac(device['address'])
         if request['action'] == 'sync':
             if not re.fullmatch(r'[0-9a-fA-F]{32}', request.get('key', '')):
-                raise ValueError('Existing Omron application key is required')
+                raise ProxyInputError('Existing Omron application key is required')
             bindings = device.get('bindings', {})
             if not bindings or any(str(k) not in ('1', '2', '3', '4') for k in bindings):
-                raise ValueError('Invalid HBF user slots')
+                raise ProxyInputError('Invalid HBF user slots')
     if request.get('target'):
         normalize_mac(request['target'])
     seconds = request.get('scan_seconds', 12)
     if type(seconds) is not int or not 2 <= seconds <= 30:
-        raise ValueError('Scan time must be 2..30 seconds')
+        raise ProxyInputError('Scan time must be 2..30 seconds')
 
 
 async def operate(request, trace=None, connection_factory=ProxyConnection):
@@ -69,7 +73,7 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
         except TimeoutError:
             if action == 'probe':
                 return output
-            raise ValueError('M5GOで対象機器の広告を検出できません') from None
+            raise ProxyInputError('M5GOで対象機器の広告を検出できません') from None
         output.update(advertisement_seen=True, rssi=adv.rssi)
         if action == 'probe' and not request.get('connect'):
             return output
@@ -83,11 +87,11 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
             if action == 'probe':
                 return output
             if not output['omron_service_found']:
-                raise ValueError('対応するOmronサービスがありません')
+                raise ProxyInputError('対応するOmronサービスがありません')
             if action == 'bond':
                 # Explicit operator action only. This is BLE security, NOT Session.pair().
                 if not pairing:
-                    raise ValueError('M5GO firmware does not advertise PAIRING support')
+                    raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
                 await asyncio.wait_for(client.pair(), 30)
                 return {'bonded': True, 'application_key_changed': False}
             if trace is not None:
@@ -147,7 +151,7 @@ def main():
         return 0
     except Exception as error:
         # Library exceptions may embed addresses/credentials. Return type and stage only.
-        emit({'error': 'M5GO operation failed: ' + type(error).__name__,
+        emit({'error': str(error) if isinstance(error, ProxyInputError) else 'M5GO operation failed: ' + type(error).__name__,
               **({'diagnostic': trace} if trace is not None else {})})
         return 1
 

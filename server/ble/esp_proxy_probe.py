@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import json
 import os
 import re
@@ -46,8 +47,14 @@ def parse_args(argv=None):
 
 async def probe(host, target, scan_seconds, connect, psk):
     from esp_proxy_worker import operate
-    return await operate({'action': 'probe', 'proxy': {'host': host, 'noise_psk': psk},
-                          'target': target, 'scan_seconds': scan_seconds, 'connect': connect})
+    lock = os.open(os.environ.get('SELFCARE_BLE_LOCK', '/tmp/qnapselfcare-ble.lock'),
+                   os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return await operate({'action': 'probe', 'proxy': {'host': host, 'noise_psk': psk},
+                              'target': target, 'scan_seconds': scan_seconds, 'connect': connect})
+    finally:
+        os.close(lock)
 
 
 def main(argv=None):

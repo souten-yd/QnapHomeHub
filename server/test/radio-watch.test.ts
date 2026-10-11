@@ -86,10 +86,13 @@ describe('Advertisement listener ownership', () => {
     expect((await manager.configureWatch({adapter:'hci0',addresses:[]})).events).toHaveLength(0);
     manager.watchAddresses = ['AA:BB:CC:DD:EE:FF'];
     manager.watchLease = 0;
-    manager.stopWatcher = vi.fn(async()=>{});
+    const abandoned = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)']);
+    await once(abandoned, 'spawn');
+    manager.watcher = abandoned;
     manager.startBlueZ = vi.fn(async()=>{});
     await manager.maintainWatch();
-    expect(manager.stopWatcher).toHaveBeenCalledOnce();
+    expect(abandoned.exitCode !== null || abandoned.signalCode !== null).toBe(true);
+    expect(manager.watcher).toBeUndefined();
     expect(manager.startBlueZ).not.toHaveBeenCalled();
   });
 });

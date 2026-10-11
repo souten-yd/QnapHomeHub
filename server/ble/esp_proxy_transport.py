@@ -6,6 +6,7 @@ release. No HA BluetoothManager: its Linux setup opens a management socket.
 The parent owns reconnect/backoff and device exclusion, not this transport.
 """
 import asyncio
+import math
 from contextlib import nullcontext
 from types import SimpleNamespace
 
@@ -91,6 +92,8 @@ class ProxyConnection:
         names = {e.key: e.name for e in entities if isinstance(e, (SensorInfo, BinarySensorInfo))}
         def state(value):
             if value.key in names and isinstance(value, (SensorState, BinarySensorState)) and not value.missing_state:
+                if isinstance(value.state, float) and not math.isfinite(value.state):
+                    return
                 self.diagnostics[names[value.key]] = value.state
                 callback(dict(self.diagnostics))
         self.api.subscribe_states(state)

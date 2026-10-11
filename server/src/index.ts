@@ -252,6 +252,17 @@ app.get('/api/radio', async (_req, res) => {
   } else res.json({ shared: false });
 });
 
+// Keys are accepted only behind management authentication and never echoed/logged.
+app.post('/api/m5go', async (req, res) => {
+  if (!(switchbot instanceof RadioClientManager)) return void res.status(503).json({ error: '共有radioサービスが必要です' });
+  if (!auth.required) return void res.status(403).json({ error: 'M5GO設定には管理パスワードを設定してください' });
+  try {
+    const input = req.body;
+    if (!input || !['status', 'config', 'probe', 'bond'].includes(input.action)) throw new Error('Invalid M5GO action');
+    res.json(await switchbot.proxy(input));
+  } catch (error) { res.status(400).json({ error: (error as Error).message }); }
+});
+
 app.get('/api/config', (_req, res) => {
   const config = store.get();
   res.json({ ...config, credentials: { switchbotApi: Boolean(switchbotToken && switchbotSecret), internalToken: Boolean(internalToken) } });
