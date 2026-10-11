@@ -95,3 +95,27 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             await remote._on_stop(False)
             with self.assertRaises(ConnectionError):
                 await waiting
+
+    async def test_security_diagnostics_accept_only_known_status_not_arbitrary_text(self):
+        from aioesphomeapi import SensorInfo, SensorState, TextSensorInfo, TextSensorState
+        self.api.list_entities_services = AsyncMock(return_value=([
+            SensorInfo(key=1, name='Free Heap'),
+            TextSensorInfo(key=2, name='BLE Security'),
+            TextSensorInfo(key=3, name='Private text'),
+        ], []))
+        updates = []
+        async with ProxyConnection('proxy.local', 'test') as remote:
+            await remote.subscribe_diagnostics(updates.append)
+            state = self.api.subscribe_states.call_args.args[0]
+            state(SensorState(key=1, state=12345))
+            state(TextSensorState(key=2, state='authenticated;disconnected:22'))
+            self.assertEqual(updates[-1], {'Free Heap': 12345, 'BLE Security': 'authenticated;disconnected:22'})
+            state(TextSensorState(key=2, state='auth_failed:97'))
+            self.assertEqual(updates[-1]['BLE Security'], 'auth_failed:97')
+            count = len(updates)
+            for value in ('private credential', 'auth_failed:97\nsecret', 'bond_count:' + '1' * 100):
+                state(TextSensorState(key=2, state=value))
+            state(TextSensorState(key=3, state='authenticated'))
+            state(TextSensorState(key=2, state='authenticated', missing_state=True))
+            state(SensorState(key=1, state=float('nan')))
+            self.assertEqual(len(updates), count)

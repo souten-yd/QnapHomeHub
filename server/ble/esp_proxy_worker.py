@@ -98,6 +98,14 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 # Explicit operator action only. This is BLE security, NOT Session.pair().
                 if not pairing:
                     raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
+                # The existing USB Session subscribes before Omron security.
+                # Prime the same CCCDs here; do not unlock, program a key or read
+                # history in pairing mode. A BLE bond alone is not sync acceptance.
+                if trace is not None:
+                    trace['stage'] = 'subscribe'
+                await Session(client, trace).subscribe()
+                if trace is not None:
+                    trace['stage'] = 'bond'
                 await asyncio.wait_for(client.pair(), 30)
                 return {'bonded': True, 'application_key_changed': False}
             if trace is not None:

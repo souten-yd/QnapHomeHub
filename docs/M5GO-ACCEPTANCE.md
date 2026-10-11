@@ -50,7 +50,11 @@
 - ESP-IDF 5.5.5の`bta_dm_act.c`は`BTM_LE_COMPLT_EVT`のSMP失敗時にsecurity device entryを削除する。自作componentに鍵削除処理はないが、プラットフォームによるM5GO内のbond削除があり得る。既存USBのBlueZ鍵／Omronアプリキーの削除は行っていない。暗号化失敗の根本原因は未確定。
 - 21:40 JST、P表示を確認して明示BLE登録を1回実行したが`BleakError`で失敗し、USBへ戻した。初回登録の認証結果・接続失敗コード・切断理由も観測できるよう診断を拡張。未知の相手への暗号化開始は引き続き行わない。
 
-残る工程はHBF既存キー認証/ユーザー別履歴、通常設置での新規測定の自動保存。
+PR #36の実験firmware（未リリース）では、保存済みbondの暗号化再開を要求しても`auth_failed:97`、unlock `8104`／`8101`となった。21:54 JSTにBLE再登録成功を確認した直後も、21:55の通常転送で同じ暗号化失敗を再現。同期を1回で止め、USBへ戻した。BLE登録成功を履歴取得成功とは扱わない。
+
+v0.3.24では明示BLE登録時も既存USB Sessionと同じ通知購読を先に行う。Omronキー書込み・unlock・履歴読取りを登録処理へ追加しない。QNAP診断では実験firmwareの`BLE Security`状態だけを許可リストで受け取り、任意のテキスト診断は公開しない。通知購読失敗時の中止・解放、登録前の購読、キー書込みなし、診断テキストの選別は自動試験で確認。**変更後の実機再接続・認証は未検証。**
+
+残る工程は登録手順の実機再検証、HBF既存キー認証/ユーザー別履歴、通常設置での新規測定の自動保存。
 実Wi-Fi断、切り戻し後のHBF・HEM・SwitchBot実動作も未検証。BLE bondが必要なら明示操作で検証し、既存bondやOmronキーを消去しない。
 
 ## ローカル再検証
@@ -65,5 +69,5 @@ python3 -m unittest discover -s server/ble -p 'test_*.py'
 PLAYWRIGHT_MODULE=/tmp/qhh-browser/node_modules/playwright/index.mjs node scripts/check-m5go-ui.mjs
 ```
 
-Python専用環境はRAWバッチの実protobuf/実パーサー契約を含む15テスト成功。
+Python専用環境はRAWバッチの実protobuf/実パーサー契約を含む17テスト成功。
 TypeScriptは32テスト成功。ブラウザ模擬APIテスト成功。これらは実機証拠に代用しません。
