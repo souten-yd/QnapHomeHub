@@ -1,0 +1,77 @@
+# M5GO初代 — 体組成計用の近距離BLE/Wi-Fiプロキシ（段階導入）
+
+## 適用範囲と現在の状態
+
+対象は初代M5GO / M5Stack Core ESP32。旧ファームウェアの上書きを許可された場合にのみUSB書き込みを行います。
+本リポジトリの `firmware/m5go/ble-proxy.yaml` はESPHomeの **active Bluetooth proxy** です。
+画面・内蔵ボタンは使わずBLE中継専用とします（画面が表示されなくても異常ではありません）。
+常時運用ではUSB給電が必要です。2.4GHz Wi-Fiが必要で、5GHz専用SSIDは使えません。
+
+**第1段階** はファームウェアと読み取り専用のBLE経路診断です。
+**現行HomeHub/SelfCareの通常同期は引き続きUSBドングル経由**で動きます。
+この段階ではM5GOによる測定履歴の自動同期・ペアリング・認証は実装していません。
+HBF-228TがM5GOを通じて広告・GATTに到達できることを確認した後、専用の後続PRで
+既存Omron `Session` と連携する遠隔BLE経路、watch、手動同期、切り戻し機能を追加します。
+実機未確認の経路へ自動的に切り替えないでください。
+
+ESPHome Bluetooth Proxy: https://esphome.io/components/bluetooth_proxy/
+Python client: https://bleak-esphome.readthedocs.io/en/latest/usage.html
+M5GO仕様: https://docs.m5stack.com/ja/core/m5go
+M5Stack Core ESP32ボード: https://docs.platformio.org/en/stable/boards/espressif32/m5stack-core-esp32.html
+
+## USB初回書き込み
+
+初回書き込みはM5GOをUSBで接続できるPCで行います。インストール済みの旧ソフトウェアは上書きされます。
+1. `firmware/m5go/secrets.example.yaml` を同じフォルダの `secrets.yaml` にコピー（gitignore対象）。
+2. `wifi_ssid` と `wifi_password` を2.4GHz Wi-Fiの設定に置き換えます。
+3. `api_encryption_key` に32ランダムバイトのbase64文字列を入力します。生成例:
+   `python -c "import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())"`
+4. Linux PC等でESPHome CLIを導入し、`esphome config firmware/m5go/ble-proxy.yaml` で検証。
+5. USBシリアル接続先を指定し `esphome run firmware/m5go/ble-proxy.yaml --device /dev/ttyUSB0` で書き込み。
+   USBポート名は実機に合わせること。Windowsから操作する場合は対応するCOMポートを指定。
+6. シリアルログ/ルーターで `qnap-m5go-proxy` のLAN IPを確認する。
+   Wi-Fi/LANアクセス不可ならUSBで再書き込み。データ消去やQNAP設定変更は不要。
+
+ESPHomeの初回インストールにはESP-IDFツールチェーンとUSBシリアルアクセスが必要です。
+作業PCがWindowsでコンパイルに失敗する場合はLinux環境でビルドしたfactory imageを
+https://web.esphome.io/ からUSB書き込みする方法もあります。
+API暗号鍵はQNAPとM5GOの間で一致させます。秘密鍵とWi-Fiパスワード、個人健康記録はGitHubへコミットしないでください。
+
+## QNAP上の非侵襲的通信チェック（M5GOが書き込み・起動済みの場合のみ）
+
+HomeHubの新しいDocker `radio` コンテナには、従来のBleak 0.22を触らずに
+別の仮想環境 `/opt/ble-proxy` に `bleak-esphome==4.1.0` が入ります。
+既存のBlueZ、USBのOmron同期、SwitchBot処理と分離しています。
+M5GOのLANアドレスとHBF-228TのMACを確認した上で、次の診断を1回実行できます:
+
+```sh
+# 管理者SSH。鍵をシェル履歴やGitリポジトリへ直接書かない。
+# API鍵はQNAP側で秘密として取り扱い、例では入力プロンプトから渡す。
+read -r -s -p "ESPHome API key: " HOMEHUB_M5GO_NOISE_PSK; echo
+export HOMEHUB_M5GO_NOISE_PSK
+docker exec -e HOMEHUB_M5GO_NOISE_PSK="$HOMEHUB_M5GO_NOISE_PSK" qnaphomehub-radio \
+  /opt/ble-proxy/bin/python /app/ble/esp_proxy_probe.py \
+  --host 192.168.1.28 --target AA:BB:CC:11:22:33 --scan-seconds 15
+unset HOMEHUB_M5GO_NOISE_PSK
+```
+
+ホストIP/MACは例です。まず `api_connected` と `advertisement_seen` を確認し、
+測定器のBluetoothボタンを短く押して広告が届くか調べます。
+広告が届いたら必要に応じ `--connect` を追加し、Omron GATTサービスが見えるか確認します。
+`--connect` も読み取り専用で、ペアリング/キー送信/測定履歴読取/EEPROM書込みは一切しません。
+
+- `api_connected=false`: M5GO側のWi-Fi、IP、API暗号鍵、TCP 6053を確認。
+- `advertisement_seen=false`: M5GOと体組成計の距離・通信モード・BLE広告を確認。
+- `gatt_connected=false`: BLE接続状態、OS bonding要件、ESPHome connection slot、再試行タイミングを確認。
+- `omron_service_found=false`: 機種・アドレス・GATTサービス互換性を再確認。
+
+実機確認が済むまでBluetooth経路・ペアリング情報・USBドングルの設定は変更しません。
+低ディスクI/O対策（QTSホスト側BlueZの二重起動抑制）も維持してください。
+
+## 次PRへの合格条件
+
+1. 遠隔ESPHome APIの認証・BLE広告検出・GATTサービス確認が成功する。
+2. HBF-228Tのユーザースロットと既存のペアリングキーで遠隔認証できるか非破壊で検証する。
+3. HomeHubだけを変更して既存SelfCare Unix socket `/run` と `/watch` を維持する。
+4. USB/遠隔経路は明示切替とし、遠隔失敗時に無制限再試行や自動再ペアリングをしない。
+5. 血圧計・SwitchBot・QNAPの低I/O・既存データを保護する。
