@@ -3,7 +3,14 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { spawn } from 'node:child_process';
 import { SharedRadioManager } from '../src/shared-radio.js';
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 const config = () => ({ hciDeviceId: 0, scanTimeoutMs: 10000, apiFallback: false, scanOnStartup: false, devices: [] });
 const target = 'AA:BB:CC:11:22:33';
 const key = Buffer.alloc(32, 1).toString('base64');
@@ -24,6 +31,59 @@ function request(socketPath: string, endpoint: string, payload?: unknown): Promi
 }
 
 describe('M5GO routing and Unix socket contract', () => {
+  it('forwards the existing key only to one armed sync and consumes permission even on worker failure', async () => {
+    const { manager, close } = await setup();
+    const payloads: any[] = [];
+    const applicationKey = '12'.repeat(16);
+    vi.mocked(spawn).mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough() });
+      let input = '';
+      child.stdin.on('data', chunk => { input += chunk; });
+      child.stdin.on('finish', () => {
+        payloads.push(JSON.parse(input));
+        child.stdout.write(JSON.stringify({ error: 'test link failure' }));
+        child.emit('close', 1);
+      });
+      return child as any;
+    });
+    try {
+      await manager.proxyStore.update(settings);
+      const arm = { action: 'proxy-prepare-bond-session', confirm: 'bond-session-hbf-228t' };
+      await manager.arbiter.run('selfcare', arm);
+      // Other devices still use USB and cannot consume the HBF authorization.
+      manager.startBlueZ = vi.fn(async () => { throw new Error('USB route'); });
+      await expect(manager.arbiter.run('selfcare', { ...sync, device: { model: 'HEM-6232T', address: target } })).rejects.toThrow('USB route');
+      expect(manager.proxyStatus().bondSession.pending).toBe(true);
+      const input = { ...sync, key: applicationKey, bond_session: true };
+      await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
+      expect(manager.proxyStatus().bondSession.pending).toBe(false);
+      await expect(manager.arbiter.run('selfcare', input)).rejects.toThrow('test link failure');
+      expect(payloads.map(x => x.bond_session)).toEqual([true, false]);
+      expect(payloads.map(x => x.key)).toEqual([applicationKey, applicationKey]);
+      expect(JSON.stringify(manager.proxyStatus())).not.toContain(applicationKey);
+    } finally { vi.mocked(spawn).mockReset(); await close(); }
+  });
+
+  it('arms only explicitly, resets on config/cancel, and does not expose credentials', async () => {
+    const { manager, directory, close } = await setup();
+    try {
+      manager.maintainWatch = async () => {};
+      const socket = path.join(directory, 'ble.sock');
+      await manager.listen(socket);
+      await request(socket, '/proxy', { action: 'config', patch: settings });
+      expect((await request(socket, '/proxy', { action: 'prepare-bond-session' })).status).toBe(400);
+      const arm = { action: 'prepare-bond-session', confirm: 'bond-session-hbf-228t' };
+      const ready = await request(socket, '/proxy', arm);
+      expect(ready.body.bondSession.pending).toBe(true);
+      expect(JSON.stringify(ready)).not.toContain(key);
+      expect((await request(socket, '/proxy', arm)).status).toBe(400);
+      expect((await request(socket, '/proxy', { action: 'cancel-bond-session' })).body.bondSession.pending).toBe(false);
+      await request(socket, '/proxy', arm);
+      expect((await request(socket, '/proxy', { action: 'config', patch: { route: 'usb' } })).body.bondSession.pending).toBe(false);
+      expect((await request(socket, '/proxy', arm)).status).toBe(400);
+    } finally { await close(); }
+  });
+
   it('routes only registered HBF to M5GO, never automatically falls back on failure', async () => {
     const { manager, close } = await setup();
     try {

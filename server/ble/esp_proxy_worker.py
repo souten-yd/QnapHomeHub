@@ -22,6 +22,8 @@ class ProxyInputError(ValueError):
 def validate(request):
     if request.get('action') not in ('probe', 'sync', 'bond', 'watch'):
         raise ProxyInputError('Unsupported M5GO operation')
+    if 'bond_session' in request and (type(request['bond_session']) is not bool or request['action'] != 'sync'):
+        raise ProxyInputError('Registration session requires an explicit sync operation')
     proxy = request['proxy']
     host = proxy.get('host', '')
     if not isinstance(host, str) or not re.fullmatch(r'[a-zA-Z0-9_.:-]{1,253}', host):
@@ -60,6 +62,8 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
         if trace is not None:
             trace.update(api_connected=True, pairing_supported=pairing, stage='discovery')
         action = request['action']
+        bond_session = action == 'sync' and request.get('bond_session') is True
+        explicit_bond = action == 'bond' or bond_session
         target = request.get('target') if action == 'probe' else request['device']['address']
         output = {'schema': 1, 'mode': 'read-only', 'api_connected': True,
                   'pairing_supported': pairing, 'advertisement_seen': False,
@@ -88,32 +92,35 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
         client = remote.client(target, adv)
         try:
             security = await remote.prepare_security(trace) if action in ('sync', 'bond') else None
-            if action == 'bond' and security:
+            if bond_session and not security:
+                raise ProxyInputError('Registration session requires current-connection security diagnostics')
+            if explicit_bond and security:
                 if not pairing:
                     raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
                 await remote.prepare_bond(target)
                 security.mark('explicit_bond_prepared')
             await asyncio.wait_for(client.connect(), 25)
             if security:
-                await security.connected(require_bond=action == 'sync')
+                await security.connected(require_bond=action == 'sync' and not bond_session)
             output.update(gatt_connected=bool(client.is_connected),
                           omron_service_found=client.services.get_service(protocol.SERVICE) is not None)
             if action == 'probe':
                 return output
             if not output['omron_service_found']:
                 raise ProxyInputError('対応するOmronサービスがありません')
-            if action == 'bond':
+            if explicit_bond:
                 # Explicit operator action only. This is BLE security, NOT Session.pair().
                 if not pairing:
                     raise ProxyInputError('M5GO firmware does not advertise PAIRING support')
                 # The existing USB Session subscribes before Omron security.
-                # Prime the same CCCDs here; do not unlock, program a key or read
-                # history in pairing mode. A BLE bond alone is not sync acceptance.
+                # Use the same notifications for BLE registration and any
+                # explicitly authorized existing-key history transaction.
                 if trace is not None:
                     trace['stage'] = 'subscribe'
                 if security:
                     security.mark('notifications_requested')
-                await Session(client, trace).subscribe()
+                session = Session(client, trace)
+                await session.subscribe()
                 if security:
                     security.mark('notifications_ready')
                 if trace is not None:
@@ -121,6 +128,14 @@ async def operate(request, trace=None, connection_factory=ProxyConnection):
                 await asyncio.wait_for(client.pair(), 30)
                 if security:
                     await security.authenticated()
+                if bond_session:
+                    security.mark('unlock_allowed')
+                    if trace is not None:
+                        trace['explicit_bond_session'] = True
+                    # Never call Session.pair(): reuse SelfCare's existing key,
+                    # read history and check normal close on this connection.
+                    # Reconnect persistence still needs a separate acceptance.
+                    return await sync_session(session, request, trace)
                 return {'bonded': True, 'application_key_changed': False}
             if trace is not None:
                 trace['stage'] = 'subscribe'
