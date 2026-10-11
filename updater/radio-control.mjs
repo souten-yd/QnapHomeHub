@@ -21,13 +21,21 @@ export function checkRadioIdentity(container, projectDir) {
   for (const dest of ['/radio', '/var/lib/bluetooth']) {
     const matches = mounts.filter(item => item.Destination === dest && item.Type === 'bind');
     if (matches.length !== 1) fail('Radio persistent mount missing: ' + dest);
-    if (!path.resolve(matches[0].Source).startsWith(path.resolve(projectDir) + path.sep)) {
+    // QNAP often canonicalizes /share/Container to /share/CACHEDEV*_DATA:
+    // require exact HomeHub data-relative path, not a lexical /share alias.
+    const expectedTail = '/QnapHomeHub/data/' + (dest === '/radio' ? 'radio' : 'bluetooth');
+    const source = path.resolve(matches[0].Source);
+    if (source !== path.resolve(projectDir, 'data', dest === '/radio' ? 'radio' : 'bluetooth') &&
+        !source.endsWith(expectedTail)) {
       fail('Radio bind mount outside expected HomeHub directory: ' + dest);
     }
   }
   const expected = path.resolve(projectDir);
   const working = label(container, 'com.docker.compose.project.working_dir');
-  if (!working || path.resolve(working) !== expected) fail('Radio Compose working directory mismatch');
+  if (!working || (path.resolve(working) !== expected &&
+      !path.resolve(working).endsWith('/QnapHomeHub'))) {
+    fail('Radio Compose working directory mismatch');
+  }
   return true;
 }
 
@@ -77,6 +85,10 @@ export function createRadioControl({ command, projectDir, composeProject = expec
         if (!container.State?.Running) await command(['docker', 'start', RADIO]);
         await command(['docker', 'update', '--restart=unless-stopped', RADIO]);
       } else {
+        const usesHostBluez = (container.Config?.Env || []).includes('HOMEHUB_BLUEZ_MODE=host');
+        if (usesHostBluez || (container.Mounts || []).some(x => x.Destination === '/run/dbus')) {
+          fail('Host BlueZ mode uses a host D-Bus mount; refusing private low-I/O overlay');
+        }
         // Compose overlay is packaged in this updater image, not written to the NAS.
         // No dependent containers are created or started.
         if (!fs.existsSync(baseFile) || !fs.existsSync(overlay)) {
