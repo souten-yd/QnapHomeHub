@@ -103,6 +103,9 @@ async function updaterRequest(endpoint: string, init: RequestInit = {}): Promise
     catch { body = { error: text }; }
   }
   if (!response.ok) {
+    if (response.status === 404 && endpoint.startsWith('/radio/')) {
+      throw new Error('更新サービスが旧版です（radio制御API未対応）。updaterコンテナの再作成が必要です。');
+    }
     const message = typeof body === 'object' && body && 'error' in body ? String((body as { error?: unknown }).error) : `Updater HTTP ${response.status}`;
     throw new Error(message);
   }
