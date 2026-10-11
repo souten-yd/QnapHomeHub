@@ -13,6 +13,8 @@ USBの `Session.subscribe()` と `Session.pair(existing_key, 'HBF-228T')` をそ
 3. 同じ対象の通常syncを1回だけ要求する。SelfCareのpairは要求しない。HomeHub内の予約が次の要求を登録専用へ切り替える。
 4. `bondSession.mode: application` の予約は120秒・1回限り。ワーカー起動前に消費し、失敗後の通常要求は登録を繰り返さない。キーや予約フラグを要求に追加するだけでは許可できない。経路・設定変更、再起動、`cancel-bond-session`で失効する。
 5. 登録専用の応答は `registration_only: true`、空の `records`、`diagnostic.stage: registration_completed`、`application_key_value_reused: true`、`history_read: false`。SelfCareの既存syncレスポンス形式を維持するため空配列を返すが、測定取得成功を意味しない。HomeHubは `lastRegistration` を更新し、`lastSync` は更新しない。
+SelfCareはこの要求を通常syncとして処理するため、ジョブ表示は「0件追加」で、HBF待ち受けの成功時刻も更新される。既存の1時間の待ち受け抑制が適用されるので、直後の再接続・USB比較は手動syncで実施する。新規測定の自動保存試験は抑制期間の終了後に行う。SelfCareのコードや時刻DBを変更して回避しない。診断を保存するため、試験ジョブは `diagnostic: true` を必須とする。
+
 6. 失敗なら停止。BLE bond削除・再登録・キー変更へ自動で進まない。USB経路と元の自動同期設定に復帰する。経路復帰だけで体組成計内の登録が復元されたとは判定しない。
 
 ## 実機試験の判定
