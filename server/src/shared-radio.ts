@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ProxyConfigStore, publicProxyConfig } from './proxy-config.js';
+import { ProxyBondSession } from './proxy-bond-session.js';
 import { RadioArbiter } from './radio-arbiter.js';
 import type { AppConfig, DiscoveredDevice } from './types.js';
 
@@ -25,6 +26,7 @@ export async function stopProcess(child: ChildProcess | undefined): Promise<void
 
 export class SharedRadioManager {
   private readonly proxyStore: ProxyConfigStore;
+  private readonly proxyBondSession = new ProxyBondSession();
   private proxyWatcher?: ChildProcess;
   private proxyStarting?: Promise<void>;
   private proxyReady = false;
@@ -199,7 +201,8 @@ export class SharedRadioManager {
     return { ...publicProxyConfig(this.proxyStore.get()), apiConnected: this.proxyReady,
       error: this.proxyError, pairingSupported: this.proxyPairingSupported,
       advertisement: this.watchSeen.get(this.proxyStore.get().target),
-      diagnostics: this.proxyDiagnostics, lastSync: this.proxyLastSync };
+      diagnostics: this.proxyDiagnostics, lastSync: this.proxyLastSync,
+      bondSession: this.proxyBondSession.status() };
   }
 
   private proxyRequestConfig() {
@@ -262,21 +265,34 @@ export class SharedRadioManager {
 
   private async proxyOperation<T>(request: any): Promise<T> {
     if (request.action === 'proxy-config') {
+      this.proxyBondSession.cancel();
       await this.proxyStore.update(request.patch);
       this.proxyReady = false; this.proxyError = undefined; this.proxyDiagnostics = {};
       this.proxyNextStart = 0; this.proxyFailures = 0; this.watchSeen.clear();
       return this.proxyStatus() as T;
     }
     const config = this.proxyStore.get();
+    if (request.action === 'proxy-cancel-bond-session') {
+      this.proxyBondSession.cancel();
+      return this.proxyStatus() as T;
+    }
     if (!config.host || !config.noisePsk) throw new Error('M5GO host and API key are required');
+    if (request.action === 'proxy-prepare-bond-session') {
+      if (request.confirm !== 'bond-session-hbf-228t' || config.route !== 'm5go' || !config.target)
+        throw new Error('Explicit HBF-228T registration session confirmation and M5GO route are required');
+      this.proxyBondSession.prepare(config.target);
+      return this.proxyStatus() as T;
+    }
     let payload: any;
     if (request.action === 'proxy-probe') payload = { action: 'probe', target: config.target || undefined, connect: request.connect === true };
     else if (request.action === 'proxy-bond') {
+      this.proxyBondSession.cancel();
       if (request.confirm !== 'bond-hbf-228t' || !config.target) throw new Error('Explicit HBF-228T BLE bond confirmation is required');
       payload = { action: 'bond', device: { address: config.target, model: 'HBF-228T' } };
     } else {
       if (request.action !== 'sync') throw new Error('M5GO uses the existing Omron key; application pairing must use USB');
-      payload = request;
+      // Never trust a caller-supplied bond_session flag on an ordinary sync.
+      payload = { ...request, bond_session: this.proxyBondSession.consume(request.device.address) };
     }
     payload = { ...payload, proxy: this.proxyRequestConfig() };
     const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_proxy_worker.py'], { stdio: ['pipe', 'pipe', 'ignore'] });
@@ -359,7 +375,7 @@ export class SharedRadioManager {
   }
 
   private async callSelfCare<T>(request: any): Promise<T> {
-    if (['proxy-config', 'proxy-probe', 'proxy-bond'].includes(request?.action)) return this.proxyOperation<T>(request);
+    if (['proxy-config', 'proxy-probe', 'proxy-bond', 'proxy-prepare-bond-session', 'proxy-cancel-bond-session'].includes(request?.action)) return this.proxyOperation<T>(request);
     if (!['scan', 'pair', 'sync'].includes(request?.action)) throw new Error('Unknown SelfCare Bluetooth operation');
     if (request.adapter !== `hci${this.getConfig().hciDeviceId}`) throw new Error('SelfCare adapter must match the HomeHub HCI setting');
     if (this.usesProxy(request)) return this.proxyOperation<T>(request);
@@ -450,7 +466,7 @@ export class SharedRadioManager {
         const request = JSON.parse(body);
         if (req.url === '/proxy') {
           if (request.action === 'status') return reply(200, this.proxyStatus());
-          if (!['config', 'probe', 'bond'].includes(request.action)) throw new Error('Unknown proxy operation');
+          if (!['config', 'probe', 'bond', 'prepare-bond-session', 'cancel-bond-session'].includes(request.action)) throw new Error('Unknown proxy operation');
           return reply(200, await this.arbiter.run('selfcare', { ...request, action: 'proxy-' + request.action }));
         }
         if (req.url === '/watch') return reply(200, await this.configureWatch(request));
