@@ -10,6 +10,7 @@ from ble_worker import Session, sync_session
 from esp_proxy_worker import operate, validate, watch
 
 ADDRESS = 'AA:BB:CC:11:22:33'
+DESCRIPTORS = {protocol.UNLOCK: 0x123, **{uuid: 0x200 + index for index, uuid in enumerate(protocol.RX)}}
 REQUEST = {'action': 'sync', 'proxy': {'host': 'm5go.local', 'noise_psk': 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='},
            'key': '12' * 16, 'device': {'id': 'scale', 'model': 'HBF-228T', 'address': ADDRESS,
                                       'bindings': {'1': 'alice', '4': 'bob'}, 'utc_offset_minutes': 540}}
@@ -33,9 +34,12 @@ class Peripheral:
         self.bonds = 0
         self.bond_notifications = []
         self.notification_changes = []
+        self.descriptor_writes = []
         self.require_staged = False
         self.services = SimpleNamespace(get_service=lambda _: True,
-                                        get_characteristic=lambda _: SimpleNamespace(properties=['write']))
+                                        get_characteristic=lambda char: SimpleNamespace(properties=['write'],
+                                            get_descriptor=lambda _: SimpleNamespace(handle=DESCRIPTORS[char]))
+                                            if char in DESCRIPTORS else SimpleNamespace(properties=['write']))
 
     async def connect(self):
         self.is_connected = True
@@ -63,6 +67,15 @@ class Peripheral:
             raise ConnectionError('CCCD transition failed')
         self.notifications.pop(char, None)
 
+    async def write_gatt_descriptor(self, handle, data):
+        self.descriptor_writes.append((handle, bytes(data)))
+        if self.fail == 'clear_rx' or (self.fail == 'descriptor' and handle == DESCRIPTORS[protocol.UNLOCK]):
+            raise ConnectionError('CCCD write failed')
+        if data == b'\x00\x00':
+            for uuid, value in DESCRIPTORS.items():
+                if handle == value:
+                    self.notifications.pop(uuid, None)
+
     async def write_gatt_char(self, char, data, response):
         self.writes.append((char, bytes(data)))
         if char == protocol.UNLOCK:
@@ -74,6 +87,8 @@ class Peripheral:
         opcode, address, length = data[1], int.from_bytes(data[3:5], 'big'), data[5]
         if self.require_staged and set(self.notifications) != set(protocol.RX):
             raise AssertionError('Incorrect subscriptions at memory transfer')
+        if self.require_staged and self.descriptor_writes != [(DESCRIPTORS[c], b'\x00\x00') for c in [*protocol.RX[1:], protocol.UNLOCK]]:
+            raise AssertionError('Unlock CCCD was not disabled on the peripheral')
         if self.fail == 'read' and opcode == 1:
             raise ConnectionError('lost API')
         if self.fail == 'close' and opcode == 15:
@@ -309,11 +324,14 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_sync_stages_notifications_and_never_pairs(self):
         self.client.require_staged = True
+        # Model cached peripheral CCCDs from a prior all-channel connection.
+        self.client.notifications.update({char: lambda *_: None for char in protocol.RX[1:]})
         result = await operate(self.request, None, self.remote.factory)
         self.assertEqual(len(result['records']), 2)
         self.assertEqual(self.client.notification_changes,
                          [('start', protocol.RX[0]), ('start', protocol.UNLOCK), ('stop', protocol.UNLOCK)] +
                          [('start', char) for char in protocol.RX[1:]])
+        self.assertEqual(self.client.descriptor_writes, [(DESCRIPTORS[c], b'\x00\x00') for c in [*protocol.RX[1:], protocol.UNLOCK]])
         self.assertEqual(self.client.bonds, 0)
 
     async def test_rejected_key_keeps_extra_channels_off_and_never_starts_memory(self):
@@ -324,7 +342,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.client.writes), 1)
 
     async def test_notification_transition_failures_stop_before_memory(self):
-        for phase in ('stop_notify', 'extra_notify'):
+        for phase in ('descriptor', 'stop_notify', 'extra_notify'):
             with self.subTest(phase=phase):
                 client = Peripheral(); client.fail = phase
                 if phase == 'extra_notify':
@@ -341,6 +359,23 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(trace['stage'], 'subscribe_history')
                 self.assertEqual(len(client.writes), 1)
                 self.assertTrue(client.disconnected and remote.closed)
+
+    async def test_missing_unlock_descriptor_stops_before_memory(self):
+        self.client.services.get_characteristic = lambda _: SimpleNamespace(get_descriptor=lambda _: None)
+        with self.assertRaisesRegex(ValueError, 'descriptor is unavailable'):
+            await operate(self.request, {}, self.remote.factory)
+        self.assertEqual(len(self.client.writes), 0)
+        self.assertEqual(self.client.descriptor_writes, [])
+        self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_cached_notification_clear_failure_never_sends_key(self):
+        self.client.fail = 'clear_rx'
+        trace = {}
+        with self.assertRaises(ConnectionError):
+            await operate(self.request, trace, self.remote.factory)
+        self.assertEqual(trace['stage'], 'prepare_unlock_notifications')
+        self.assertEqual(self.client.writes, [])
+        self.assertTrue(self.client.disconnected and self.remote.closed)
 
     async def test_hbf_proxy_session_rejects_key_programming(self):
         from esp_proxy_worker import HbfProxySession
