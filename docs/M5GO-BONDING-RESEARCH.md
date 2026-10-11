@@ -18,6 +18,16 @@ v0.3.26と明示登録予約対応firmwareで再評価した。P表示の登録�
 
 続く実装で、詳細ログの全面有効化を使わず、ESP-IDF 5.5.5の暗号化完了関数へ届くstatus/encr_enableだけを固定長キューで観測する候補を用意した。リンク時のラッパーは元関数を必ず1回、元の引数で呼び、制御処理を置き換えない。ネイティブの転送・並行実行試験、実ESP32ビルド、ELFの呼出先照合、暗号化OTA、初期診断の受信まで完了。コントローラー側の実ステータスはまだ未観測。変更はdraft PR #36内の実験firmwareに限り、USB/QNAPの認証やOmronキーには加えていない。
 
+### 2026-10-12の追加結果
+
+コントローラー診断を実機で確認した。登録ではstatus 0・暗号化有効、続く通常接続ではstatus `0x06`・暗号化無効を記録した。通常接続は登録から連続して他HBFジョブを排除した条件で行い、接続番号一致・診断overflowなし。保存bondは接続開始時に存在し、失敗後に消えた。詳細は[M5GO-ACCEPTANCE.md](M5GO-ACCEPTANCE.md)を参照。
+
+[Bluetooth公式のエラー定義](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/architecture%2C-mixing%2C-and-conventions/controller-error-codes.html)では`0x06`はPIN or Key Missing。[LEリンク層仕様](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/low-energy-controller/link-layer-specification.html)には、Peripheral側でLTKが得られないときに暗号化要求を同コードで拒否する経路がある。今回のコントローラーstatusはその経路と整合するが、無線パケットそのものは取得しておらず、鍵が利用できない原因や鍵識別情報の正しさは未確定。Omronアプリキーを送る前の失敗なので、そのキーの不一致と断定しない。
+
+HBF対応openScaleの実装を再確認すると、通知購読後に既存キーでunlockし、通信開始と読取りへ進む。ローカルの明示bond処理は通知購読・BLE認証の後、アプリ認証を行わず切断する。USBで既に成功している`Session.pair()`はアプリキー書込み後に通信開始・終了を行う。これらの差から、**同一登録接続で既存キー認証と通信の正常終了を行うことがbond保持に関係するか**を次の仮説とする。ただし、既存キーの再利用と新規キー登録は同じ条件ではない。既存キーのopcode 1認証、通信開始0・終了15だけを用いる限定候補を準備してから試験し、キー書込みopcode 0/登録モードopcode 2へはフォールバックしない。まだ実装・実機検証していない。
+
+hass-omron PR #175も同じ`0x06`だが、対象は血圧計であり、登録確定のEEPROM書込みをHBFへ転用する根拠にはならない。今回の結果から全ゼロIRK対策や待機延長だけを再試行する根拠も得られていない。USBと元の自動同期へ復帰済み。
+
 ## 公式資料
 
 - [OMRON HBF-227T/228T/230T共通取扱説明書](https://store.healthcare.omron.co.jp/support/download/manual/pdf/6602384-7D_HBF-230T-SW.pdf): HBF-228Tを対象に含む。初期登録、通常通信、通信設定の削除は別操作。ボタン表示の確認には使えるが、ESP32向けGATT/SMPの実装仕様ではない。

@@ -103,6 +103,18 @@ USB経路と元のHBF自動同期に復帰し、SelfCare listener ready・busy�
 
 候補`02f85bf`を暗号化OTAで反映し、実機から`BLE Session`と`BLE Controller`の初期状態（ともに接続番号0・イベントなし）を受信した。QNAPはv0.3.26を維持する。限定試験監視は登録成功後と通常同期後に両診断を暗号化APIから回収し、接続番号を照合する。登録時にコントローラーの暗号化成功イベントを確認できなければ、通常再接続へ進まず復帰する。まだ新診断で体組成計の接続・失敗原因を観測したとは判定しない。
 
+### コントローラー診断による暗号化失敗の特定（2026-10-12 JST）
+
+候補`02f85bf`の同一firmwareで、登録と通常再接続を各1回実行した。登録時は接続番号1、コントローラー記録`[[828,0,1]]`で暗号化成功を確認し、GAP認証成功・保存bondありで切断。Omronアプリキーは変更していない。
+
+HBF自動同期OFFとM5GO経路を連続して保持し、00:02:46〜00:02:58 JSTに通常同期を1回実行。別HBFジョブの介入なし、診断の接続番号一致、overflowなしを確認した。接続番号2ではOPEN 1 ms、保存bond確認3 ms（mask 3、鍵長16、public、IRK/EDIV/RAND非ゼロ）、暗号化要求4 ms、**コントローラーstatus 6・暗号化無効58 ms**、GAP認証97 78 ms、bond数0 2204 ms、切断22 2205 ms。RSSI -65 dBm。CCCD・Omronキー送信・履歴読取り前に失敗し、履歴通知0件だった。
+
+`0x06`は[Bluetooth公式仕様のPIN or Key Missing](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/architecture%2C-mixing%2C-and-conventions/controller-error-codes.html)。実SDK 5.5.5の`hcidefs.h`も`HCI_ERR_KEY_MISSING`と定義する。これで従来のGAP97より下位のエラーを確認できた。ただし、体重計が対応鍵を保持していない原因や、ESP32が再開時に使う鍵・識別情報の正しさまでは確定していない。BLEの暗号鍵と既存Omronアプリキーを混同しない。
+
+通常利用で毎回のペアリングを要求する仕様にはしない。今回の反復は暗号化失敗後にESP-IDF側のbondが消える異常経路の診断であり、解決策ではない。監視終了時にUSBと元のHBF自動同期ONへ復帰し、SelfCare listener ready・busyなし・errorなしを確認した。非公開証拠は`secrets/m5go-controller-isolated-result.json`と`secrets/controller-trial-restored-listener.json`。PR #36はdraftを維持し、通常再接続・履歴取得・自動保存は未達。
+
+次の候補は、BLE登録直後に切断する現在の処理と、同一接続で既存キーによるunlock・通信開始・正常終了まで行う処理の差である。HBF対応openScaleでは登録後にアプリ通信へ進むが、今回の条件でそれがbond保持に必要という証拠はまだない。実験する場合は既存キーのみ、認証成功後のみ、開始/終了の応答を確認して1回で停止する。キー再発行や他型番のEEPROM書込みは行わない。未実装・未検証であり、同じ登録操作の再依頼はまだ行わない。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。
