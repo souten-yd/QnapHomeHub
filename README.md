@@ -11,6 +11,9 @@ QNAP NASを **SwitchBotのローカルBluetoothゲートウェイ**にし、Web 
 
 ## 主な機能
 
+**0.3.18:** HBF-228Tの広告待ち受けによる自動同期で、BLE接続待ちを8秒から20秒に延長しました。電波が弱めの設置環境で次の接続可能な広告を待つ余裕を増やします。手動同期・ペアリング・HEM-6232Tは従来の20秒のままです。自動HCIリセットや再ペアリング、無制限の再試行は追加していません。新しい動作はHomeHubのradioコンテナを更新後に有効になります。
+
+
 - USB Bluetoothを独立したradioサービスで管理。SwitchBotは既存の `node-switchbot` + Noble、SelfCareのOmronはBlueZ/Bleakで制御
 - NASの古いBlueZに依存せず、コンテナ内に新しいBlueZを同梱。SelfCare待機を維持し、Bot操作時だけ一時切替
 - Web UIからBLEスキャン、Bot登録、Press / ON / OFF / 状態取得
