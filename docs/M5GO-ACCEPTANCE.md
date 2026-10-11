@@ -50,6 +50,14 @@ v0.3.24では明示BLE登録時も既存USB Sessionと同じ通知購読を先�
 残る工程は登録手順の実機再検証、HBF既存キー認証/ユーザー別履歴、通常設置での新規測定の自動保存。
 実Wi-Fi断、切り戻し後のHBF・HEM・SwitchBot実動作も未検証。BLE bondが必要なら明示操作で検証し、既存bondやOmronキーを消去しない。
 
+### v0.3.28実機結果と通知停止APIの修正
+
+2026-10-12 JSTの再開試験では、保存bondがある接続番号4は通知設定中にコントローラーstatus 6、GAP認証97で失敗し、Omronキーを送信していない。終了時はbond数0。新しいP表示確認後の接続番号5では保存bondなしからBLE登録・暗号化に成功（controller status 0、encryption enabled 1）したが、`prepare_unlock_notifications`段階で`ValueError`となった。キー送信・履歴取得は未実施。各試験終了後にUSB・元の自動同期ONへ復帰した。
+
+原因は、[Bleak 3の公開API](https://bleak.readthedocs.io/en/latest/api/client.html#bleak.BleakClient.write_gatt_descriptor)がCCCD直接書込みを禁止すること。v0.3.28の模擬機器テストはこの制約を再現しておらず、検証不足だった。v0.3.29は公開`stop_notify()`を使い、ESPHome専用backendで機器側CCCDのOFF書込み応答を待ってから通知転送を解除する。未購読のRXでも残存CCCDをOFFにし、応答失敗時は後続のキー送信・履歴処理を進めない。USB backendやOmronキーの扱いは変更しない。
+
+回帰試験は実Bleak 3.0.2・bleak-esphome 4.1.0・実サービス/記述子モデルを通し、v0.3.28の処理が同じCCCD `ValueError`で失敗することを再現。修正後は既存キー送信前後のCCCD順序、書込み応答待ち、失敗時の通知転送保持、未購読・記述子欠落・切断状態を確認した。全41件のPython試験が成功。Bluetooth通信自体は模擬APIなので、HBF-228Tの認証・履歴取得・自動保存成功とは判定しない。
+
 ## ローカル再検証
 
 v0.3.26は診断firmwareへの明示BLE登録前に、応答確認付きの`prepare_ble_bond` API actionを呼ぶ。firmware側は対象機器・次のOPEN試行1回・30秒以内に限り、自作コンポーネントの接続直後の暗号化要求を待たせる。これによりP表示で既存bondの再開が登録処理へ先回りする経路を分離する。通常同期はこのactionを呼ばず、暗号化成功ガードを維持する。actionの欠落・不正な定義・拒否・応答タイムアウトではGATT接続前に停止する。API終了時に予約を解除し、通信断時も時間と接続回数で失効する。Omronキー再発行、bond削除、EEPROM書込みは追加しない。実験firmwareは引き続き別のdraft PRで管理し、この変更だけでHBF再接続・履歴取得成功とは判定しない。

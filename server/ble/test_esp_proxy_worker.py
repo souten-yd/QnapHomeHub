@@ -63,7 +63,11 @@ class Peripheral:
 
     async def stop_notify(self, char):
         self.notification_changes.append(('stop', char))
-        if self.fail == 'stop_notify':
+        descriptor = self.services.get_characteristic(char).get_descriptor('00002902-0000-1000-8000-00805f9b34fb')
+        if descriptor is None:
+            raise ValueError('HBF notification descriptor is unavailable')
+        await self.write_gatt_descriptor(descriptor.handle, b'\x00\x00')
+        if self.fail == 'stop_notify' and char == protocol.UNLOCK:
             raise ConnectionError('CCCD transition failed')
         self.notifications.pop(char, None)
 
@@ -329,7 +333,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         result = await operate(self.request, None, self.remote.factory)
         self.assertEqual(len(result['records']), 2)
         self.assertEqual(self.client.notification_changes,
-                         [('start', protocol.RX[0]), ('start', protocol.UNLOCK), ('stop', protocol.UNLOCK)] +
+                         [('start', protocol.RX[0]), ('start', protocol.UNLOCK)] +
+                         [('stop', char) for char in [*protocol.RX[1:], protocol.UNLOCK]] +
                          [('start', char) for char in protocol.RX[1:]])
         self.assertEqual(self.client.descriptor_writes, [(DESCRIPTORS[c], b'\x00\x00') for c in [*protocol.RX[1:], protocol.UNLOCK]])
         self.assertEqual(self.client.bonds, 0)
@@ -338,7 +343,8 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.client.fail = 'auth'
         with self.assertRaises(ValueError):
             await operate(self.request, {}, self.remote.factory)
-        self.assertEqual(self.client.notification_changes, [('start', protocol.RX[0]), ('start', protocol.UNLOCK)])
+        self.assertEqual(self.client.notification_changes, [('start', protocol.RX[0]), ('start', protocol.UNLOCK)] +
+                         [('stop', char) for char in protocol.RX[1:]])
         self.assertEqual(len(self.client.writes), 1)
 
     async def test_notification_transition_failures_stop_before_memory(self):

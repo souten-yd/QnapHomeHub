@@ -40,25 +40,17 @@ class HbfProxySession(Session):
         # A bonded peripheral may retain CCCDs across connections. Establish
         # the pre-auth state even when a previous session enabled RX1..3.
         for uuid in protocol.RX[1:]:
-            await self.disable_notification(uuid)
+            await self.client.stop_notify(uuid)
         await super().unlock(opcode, key, expected)
         if self.trace is not None:
             self.trace['stage'] = 'subscribe_history'
         # Only a successful 8100 response permits the notification transition.
         # Do not send the memory-start command if any CCCD operation fails.
-        # bleak-esphome stop_notify removes forwarding without writing a cached
-        # CCCD. Explicitly disable it on the peripheral and await the write ACK.
-        await self.disable_notification(protocol.UNLOCK)
+        # Our ESPHome backend clears the peripheral CCCD and awaits its ACK
+        # before removing forwarding through Bleak's supported notification API.
         await self.client.stop_notify(protocol.UNLOCK)
         for index in range(1, len(protocol.RX)):
             await self.client.start_notify(protocol.RX[index], lambda _, data, i=index: self.notify(i, bytes(data)))
-
-    async def disable_notification(self, uuid):
-        characteristic = self.client.services.get_characteristic(uuid)
-        descriptor = characteristic.get_descriptor('00002902-0000-1000-8000-00805f9b34fb') if characteristic else None
-        if descriptor is None:
-            raise ProxyInputError('HBF notification descriptor is unavailable')
-        await self.client.write_gatt_descriptor(descriptor.handle, b'\x00\x00')
 
 
 def validate(request):
