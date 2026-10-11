@@ -103,11 +103,22 @@ class ProxyConnection:
         return BleakClient(device, timeout=20, backend=ESPHomeClient, client_data=self.data)
 
     async def subscribe_diagnostics(self, callback):
-        from aioesphomeapi import SensorInfo, SensorState, BinarySensorInfo, BinarySensorState
+        from aioesphomeapi import (SensorInfo, SensorState, BinarySensorInfo, BinarySensorState,
+                                  TextSensorInfo, TextSensorState)
         entities, _ = await asyncio.wait_for(self.api.list_entities_services(), 10)
-        names = {e.key: e.name for e in entities if isinstance(e, (SensorInfo, BinarySensorInfo))}
+        names = {e.key: e.name for e in entities if isinstance(e, (SensorInfo, BinarySensorInfo)) or
+                 (isinstance(e, TextSensorInfo) and e.name == 'BLE Security')}
         def state(value):
-            if value.key in names and isinstance(value, (SensorState, BinarySensorState)) and not value.missing_state:
+            if value.key in names and isinstance(value, (SensorState, BinarySensorState, TextSensorState)) and not value.missing_state:
+                if isinstance(value, TextSensorState):
+                    # Only the firmware's bounded security phase/status, never
+                    # arbitrary text entities such as network or credential data.
+                    import re
+                    if names[value.key] != 'BLE Security' or not re.fullmatch(
+                            r'(?:authenticated|encryption_requested|peer_not_bonded|bond_list_failed|'
+                            r'(?:auth_failed|request_failed|open_failed|bond_count):-?\d{1,10})'
+                            r'(?:;disconnected:\d{1,10})?', value.state):
+                        return
                 if isinstance(value.state, float) and not math.isfinite(value.state):
                     return
                 self.diagnostics[names[value.key]] = value.state
