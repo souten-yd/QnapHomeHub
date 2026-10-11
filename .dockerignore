@@ -10,3 +10,4 @@ secrets
 
 **/__pycache__/
 **/*.pyc
+firmware/

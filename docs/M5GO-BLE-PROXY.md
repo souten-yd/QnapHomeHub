@@ -26,7 +26,7 @@ M5Stack Core ESP32ボード: https://docs.platformio.org/en/stable/boards/espres
 2. `wifi_ssid` と `wifi_password` を2.4GHz Wi-Fiの設定に置き換えます。
 3. `api_encryption_key` に32ランダムバイトのbase64文字列を入力します。生成例:
    `python -c "import secrets,base64;print(base64.b64encode(secrets.token_bytes(32)).decode())"`
-4. Linux PC等でESPHome CLIを導入し、`esphome config firmware/m5go/ble-proxy.yaml` で検証。
+4. Linux PC等で `python3 -m venv .venv-m5go`、`.venv-m5go/bin/pip install -r firmware/m5go/requirements.txt` を実行して ESPHome 2026.9.1 を導入します。仮想環境を有効化し、`esphome config firmware/m5go/ble-proxy.yaml` で検証。
 5. USBシリアル接続先を指定し `esphome run firmware/m5go/ble-proxy.yaml --device /dev/ttyUSB0` で書き込み。
    USBポート名は実機に合わせること。Windowsから操作する場合は対応するCOMポートを指定。
 6. シリアルログ/ルーターで `qnap-m5go-proxy` のLAN IPを確認する。
@@ -75,3 +75,73 @@ unset HOMEHUB_M5GO_NOISE_PSK
 3. HomeHubだけを変更して既存SelfCare Unix socket `/run` と `/watch` を維持する。
 4. USB/遠隔経路は明示切替とし、遠隔失敗時に無制限再試行や自動再ペアリングをしない。
 5. 血圧計・SwitchBot・QNAPの低I/O・既存データを保護する。
+
+
+## ファームウェアのビルド・OTA・診断（2026.9.1）
+
+公式の [BLE設定](https://esphome.io/components/esp32_ble/) と
+[Bluetooth Proxy](https://esphome.io/components/bluetooth_proxy/) に合わせ、ESP-IDF、
+BLE接続1枠、継続スキャン、Wi-Fi省電力無効で構成しています。
+Wi-Fi切断時は再接続し、15分復旧しなければESP32を再起動します。
+QNAP APIクライアントが不在の場合は再起動せず、OTAを受け付けます。
+LCD、LED、Webサーバー、Home Assistantは不要です。
+Native APIでWi-Fi RSSI、uptime、free heap、API接続状態、IPを取得できます。
+診断センサーは60秒周期です。センサーを有効にしただけではQNAPディスクにログを保存しません。
+Wi-Fi/API設定はファームウェアに保持され、通常の電源再投入で消えません。
+
+ローカル検証（ダミー資格情報のみ、実機へ書き込まない）:
+
+```sh
+. .venv-m5go/bin/activate
+sh scripts/check-m5go-firmware.sh --compile
+```
+
+このスクリプトと専用CIは一時ディレクトリでコンパイルし、生成物を削除します。
+実運用の `secrets.yaml` は読みません。CIからバイナリを公開しません。
+`firmware/` はDockerビルドコンテキストからも除外しています。
+
+実運用ビルドと初回USB書込み（ポートが対象M5GOであることを確認）:
+
+```sh
+chmod 600 firmware/m5go/secrets.yaml
+esphome config firmware/m5go/ble-proxy.yaml
+esphome compile firmware/m5go/ble-proxy.yaml
+esphome upload firmware/m5go/ble-proxy.yaml --device /dev/ttyUSB0
+```
+
+**実運用バイナリにはWi-FiパスワードとAPI鍵が含まれます。** `.esphome/` の生成物、
+factory/OTAイメージをGitHub Release、Issue、CI artifact等にアップロードしないでください。
+設定検証の出力も秘密として扱い、ログを公開しないでください。
+
+OTA更新は同じ設定・鍵を維持してビルドした後、次を実行します:
+
+```sh
+esphome upload firmware/m5go/ble-proxy.yaml --device 192.168.1.28
+```
+
+ESPHome 2026.9.1の暗号化OTAを必須とし、API鍵で認証します。
+古いアップローダーでは更新できません。API鍵変更時やWi-Fiが復旧しない場合はUSBから
+再書込みします。全消去（erase-flash）はBLE bondも失うため通常復旧では実行しません。
+USB電源を安定させ、OTA中は電源を抜かないでください。
+
+## BLE bondingとOmron認証の区別
+
+[bleak-esphomeの機能フラグ](https://bleak-esphome.readthedocs.io/en/latest/usage.html)では
+`pair()` に `PAIRING` が必要です。ESPHome 2026.9.1のESP32/Bluedroid実装には対応があります。
+ただし、**BlueZのbondとM5GOのbondは別物**で、BlueZのペアリングファイルをそのまま
+転用する仕組みはありません。Omronアプリケーションの16バイト認証キーとも別です。
+既存キーでのunlockは再利用できますが、異なるBLE centralをHBF-228Tが許容するかは実機検証が必要です。
+`PAIRING`の存在、GATT接続成功、アプリ認証成功、履歴返却成功を個別に確認します。
+自動的なbond削除、Omronキー再発行、測定EEPROM書込みは行いません。
+現段階の診断ツールはbondを作成しません。
+
+## 実機受入（未実施）
+
+ビルド成功だけでは同期成功にしません。次を通常の設置場所で記録する必要があります。
+
+- Wi-Fi断・API断後の再接続、電源再投入後の設定維持、OTA後の起動。
+- 測定後の広告・RSSI、GATT通知購読、既存キー認証、全対象ユーザーの履歴取得。
+- Docker再起動後の広告待受復帰とSelfCareへの新規測定の自動保存。
+- USBへの切り戻し、HEM-6232T、SwitchBotの正常動作。
+
+遠隔同期経路とWeb設定は後続PRで追加予定です。
