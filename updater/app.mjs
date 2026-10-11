@@ -162,20 +162,30 @@ async function imageVersion(ref) {
   } catch { return null; }
 }
 
+async function radioActive() {
+  try {
+    return (await radioControl.status()).running;
+  } catch { return false; }
+}
+
 async function homeHubServices() {
   const services = await command(['docker', 'compose', '-p', composeProject, '--project-directory', projectDir, '-f', path.join(projectDir, 'compose.yaml'), 'config', '--services']);
   const configured = services.split(/\s+/);
-  const runningMatterbridge = await matterbridgeActive();
-  return ['radio', 'homehub', ...(runningMatterbridge ? ['matterbridge'] : [])]
+  const [runningRadio, runningMatterbridge] = await Promise.all([radioActive(), matterbridgeActive()]);
+  return [...(runningRadio ? ['radio'] : []), 'homehub',
+    ...(runningMatterbridge ? ['matterbridge'] : [])]
     .filter(name => configured.includes(name));
 }
 
 async function composeUp(services) {
+  const wantsRadio = services.includes('radio');
+  const preserveLowIo = wantsRadio && (await radioControl.status()).lowIo;
   await command([
     'docker', 'compose', '-p', composeProject,
     '--project-directory', projectDir,
     '-f', path.join(projectDir, 'compose.yaml'),
-    'up', '-d', '--force-recreate', ...services,
+    ...(preserveLowIo ? ['-f', '/app/compose.radio-low-io.yaml'] : []),
+    'up', '-d', '--force-recreate', '--no-deps', ...services,
   ]);
 }
 
@@ -183,7 +193,10 @@ async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs 
   const deadline = Date.now() + timeoutMs;
   let last = 'waiting';
   // Preserve intentionally stopped Matterbridge for users only needing SwitchBot/SelfCare.
-  const requireMatterbridge = !requireHomeHub || await matterbridgeActive();
+  const [requireMatterbridge, requireRadio] = await Promise.all([
+    !requireHomeHub ? Promise.resolve(true) : matterbridgeActive(),
+    radioActive(),
+  ]);
   while (Date.now() < deadline) {
     try {
       const matter = requireMatterbridge
@@ -195,7 +208,7 @@ async function waitForHealthy(targetVersion, { requireHomeHub = true, timeoutMs 
       } else {
         const home = await fetch('http://127.0.0.1:8787/api/health', { signal: AbortSignal.timeout(2500) });
         const homeBody = home.ok ? await home.json() : {};
-        if (home.ok && matter.ok && (!homeBody.radio?.shared || homeBody.radio.available) && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
+        if (home.ok && matter.ok && (!requireRadio || !homeBody.radio?.shared || homeBody.radio.available) && (!targetVersion || normalizeVersion(homeBody.version) === normalizeVersion(targetVersion))) return;
         last = `home=${home.status}/${homeBody.version || '-'} matter=${matter.status}`;
       }
     } catch (error) { last = error.message; }
