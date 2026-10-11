@@ -346,6 +346,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
   busy = true;
   const version = normalizeVersion(tag);
   let oldServer; let oldMatter;
+  let updaterImageReady = false;
   try {
     state.phase = 'preparing'; state.lastError = null;
     await saveJson(stateFile, state);
@@ -361,10 +362,16 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     const updaterRelease = `${image}:updater-${tag}`;
     await command(['docker', 'pull', serverRelease]);
     if (oldMatter) await command(['docker', 'pull', matterRelease]);
-    await command(['docker', 'pull', updaterRelease]).catch(error => log('Updater image is not available for this release; keeping current updater', error.message));
+    try {
+      await command(['docker', 'pull', updaterRelease]);
+      await command(['docker', 'tag', updaterRelease, `${image}:updater`]);
+      updaterImageReady = true;
+    } catch (error) {
+      log('Updater image is unavailable for this release; keeping current updater',
+        error instanceof Error ? error.message : 'Unknown error');
+    }
     await command(['docker', 'tag', serverRelease, `${image}:server`]);
     if (oldMatter) await command(['docker', 'tag', matterRelease, `${image}:matterbridge`]);
-    await command(['docker', 'image', 'inspect', updaterRelease]).then(() => command(['docker', 'tag', updaterRelease, `${image}:updater`])).catch(() => undefined);
 
     state.phase = 'recreating'; await saveJson(stateFile, state);
     await composeUp(await homeHubServices());
@@ -396,7 +403,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
     try {
       const currentUpdaterId = await imageId('qnaphomehub-updater');
       const desiredUpdaterId = await imageRefId(`${image}:updater`);
-      if (currentUpdaterId !== desiredUpdaterId) {
+      if (updaterImageReady && currentUpdaterId !== desiredUpdaterId) {
         await queueUpdaterHandover();
         log('Updater-only handover scheduled; radio and SelfCare remain unchanged');
       }
