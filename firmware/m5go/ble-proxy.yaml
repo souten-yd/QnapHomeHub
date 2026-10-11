@@ -4,7 +4,7 @@
 esphome:
   name: qnap-m5go-proxy
   friendly_name: QNAP M5GO Bluetooth Proxy
-  min_version: 2025.8.0
+  min_version: 2026.9.1
 
 esp32:
   board: m5stack-core-esp32
@@ -14,21 +14,59 @@ esp32:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  power_save_mode: none
+  reboot_timeout: 15min
 
 api:
+  # QNAP may be offline for maintenance; keep scanning and accepting OTA.
+  reboot_timeout: 0s
   encryption:
     key: !secret api_encryption_key
 
 ota:
   - platform: esphome
+    # ESPHome 2026.9: require encrypted OTA, using the Native API key.
+    encryption:
+      key: !secret api_encryption_key
 
 logger:
   level: WARN
 
+esp32_ble:
+  max_connections: 1
+
 esp32_ble_tracker:
   scan_parameters:
     active: true
+    continuous: true
 
 bluetooth_proxy:
   active: true
   connection_slots: 1
+
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: wifi_signal
+    name: WiFi RSSI
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: uptime
+    name: Uptime
+    update_interval: 60s
+    entity_category: diagnostic
+  - platform: debug
+    free:
+      name: Free Heap
+
+binary_sensor:
+  - platform: status
+    name: API Connected
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: IP Address
+      entity_category: diagnostic
