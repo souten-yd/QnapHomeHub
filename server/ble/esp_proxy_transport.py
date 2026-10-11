@@ -44,11 +44,27 @@ class ProxyConnection:
             self.data = ESPHomeClientData(device, self.api, self.info, self.api.api_version,
                                           self.info.name, SimpleNamespace(connecting=nullcontext))
             self.api.subscribe_bluetooth_connections_free(device.async_update_ble_connection_limits)
-            self.unsub = self.api.subscribe_bluetooth_le_advertisements(self._advertisement)
+            # Modern firmware sends raw batches only. A legacy subscription can
+            # authenticate successfully while delivering no advertisements.
+            if self.flags & BluetoothProxyFeature.RAW_ADVERTISEMENTS:
+                self.unsub = self.api.subscribe_bluetooth_le_raw_advertisements(self._raw_advertisements)
+            else:
+                self.unsub = self.api.subscribe_bluetooth_le_advertisements(self._advertisement)
             return self
         except BaseException:
             await self.close()
             raise
+
+    def _raw_advertisements(self, batch):
+        from bluetooth_data_tools import parse_advertisement_data_bytes
+        advertisements = batch.advertisements
+        for i in range(len(advertisements)):
+            raw = advertisements[i]
+            name, uuids, service_data, manufacturer_data, _ = parse_advertisement_data_bytes(raw.data)
+            self._advertisement(SimpleNamespace(
+                address=raw.address, address_type=raw.address_type, rssi=raw.rssi,
+                name=name or '', service_uuids=uuids, service_data=service_data,
+                manufacturer_data=manufacturer_data))
 
     def _advertisement(self, adv):
         address = ':'.join(f'{adv.address:012X}'[i:i + 2] for i in range(0, 12, 2))

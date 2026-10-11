@@ -50,6 +50,44 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.api.connect.assert_awaited_once()
         self.api.disconnect.assert_awaited_once()
 
+    async def test_raw_firmware_batch_decodes_to_existing_advertisement_contract(self):
+        from aioesphomeapi import BluetoothProxyFeature, DeviceInfo
+        from aioesphomeapi.api_pb2 import BluetoothLERawAdvertisementsResponse
+        from ble_advertisement import AdvertisementEvents
+        self.api.device_info.return_value = DeviceInfo(
+            name='proxy', mac_address='00:11:22:33:44:55',
+            bluetooth_proxy_feature_flags=int(BluetoothProxyFeature.ACTIVE_CONNECTIONS |
+                                             BluetoothProxyFeature.RAW_ADVERTISEMENTS))
+        unsub = self.api.subscribe_bluetooth_le_raw_advertisements.return_value = Mock()
+        events = []
+        formatter = AdvertisementEvents(['AA:BB:CC:11:22:33'], events.append)
+        def callback(address, adv):
+            formatter.detected(SimpleNamespace(address=address), SimpleNamespace(
+                local_name=adv.name, manufacturer_data=adv.manufacturer_data,
+                service_data=adv.service_data, service_uuids=adv.service_uuids,
+                tx_power=None, rssi=adv.rssi))
+        with patch('habluetooth.BluetoothManager', side_effect=AssertionError('local HCI')):
+            async with ProxyConnection('proxy.local', 'test', callback) as remote:
+                self.api.subscribe_bluetooth_le_advertisements.assert_not_called()
+                batch = BluetoothLERawAdvertisementsResponse()
+                # Flags, name, 16-bit UUID, service data, manufacturer data.
+                batch.advertisements.add(address=0xAABBCC112233, address_type=1, rssi=-47,
+                    data=bytes.fromhex('020106040948424603030d1805160d18aabb05ff0e033412'))
+                batch.advertisements.add(address=0xAABBCC445566, address_type=0, rssi=-80,
+                                         data=b'\xff')  # Truncated AD remains safe.
+                self.api.subscribe_bluetooth_le_raw_advertisements.call_args.args[0](batch)
+                adv = await remote.find('AA:BB:CC:11:22:33', .1)
+                self.assertEqual(adv.name, 'HBF')
+                self.assertEqual(adv.manufacturer_data, {0x030e: b'\x34\x12'})
+                self.assertEqual(adv.service_uuids, ['0000180d-0000-1000-8000-00805f9b34fb'])
+                self.assertEqual(adv.service_data, {'0000180d-0000-1000-8000-00805f9b34fb': b'\xaa\xbb'})
+                self.assertEqual(remote.client('AA:BB:CC:11:22:33', adv)._backend._address_type, 1)
+                self.assertEqual(len(remote.observations), 2)
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]['address'], 'AA:BB:CC:11:22:33')
+                self.assertEqual(events[0]['rssi'], -47)
+        unsub.assert_called_once()
+
     async def test_api_disconnect_unblocks_advertisement_wait(self):
         async with ProxyConnection('proxy.local', 'test') as remote:
             waiting = asyncio.create_task(remote.find('AA:BB:CC:11:22:33', 5))
