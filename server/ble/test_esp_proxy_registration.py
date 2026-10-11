@@ -116,4 +116,3 @@ class RegistrationTests(unittest.IsolatedAsyncioTestCase):
                        {'key': ''}, {'key': 'bad'}, {'device': {**REQUEST['device'], 'model': 'HEM-6232T'}}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 validate({**self.request, **update})
-
