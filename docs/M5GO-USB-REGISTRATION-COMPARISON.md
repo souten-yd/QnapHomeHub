@@ -2,6 +2,10 @@
 
 2026-10-12。対象はHomeHub v0.3.29（main `f80421f`）、M5GO実験firmware `02f85bf`、ESPHome 2026.9.1 / ESP-IDF 5.5.5。実機の最新結果は[受入記録](M5GO-ACCEPTANCE.md)を参照。
 
+## v0.3.30の実装への更新
+
+比較後、ユーザーの「進めて」を受け、USBの基底 `Session` を使う1回限りのアプリ登録をPR #43で実装し、main `a5728ae`へ統合した。[実装・操作・SelfCareとの契約](M5GO-APPLICATION-REGISTRATION.md)を参照。既存キーの値を使用し、登録と履歴同期の結果を分離する。47件のPython試験・38件のTypeScript試験・PR/main CI・Docker公開が成功。実機の登録保持とUSB共存は未検証。以下の比較表・未実装という記述はv0.3.29時点の評価である。
+
 ## 結論
 
 **USBと同じOmron登録処理をM5GOで実行する実装は可能。ただし現状は同等ではなく、同じ登録を行って既存USB接続も保持できるかは未検証。**

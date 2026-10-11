@@ -185,3 +185,15 @@ PLAYWRIGHT_MODULE=/tmp/qhh-browser/node_modules/playwright/index.mjs node script
 
 Python専用環境はRAWバッチの実protobuf/実パーサー契約を含む17テスト成功。
 TypeScriptは32テスト成功。ブラウザ模擬APIテスト成功。これらは実機証拠に代用しません。
+
+## v0.3.30：USB共通のOmron登録処理
+
+ユーザーのUSB比較・継続指示を受け、PR #43でアプリ登録専用の1回予約を追加。既存キーの値を使い、USBの `Session.subscribe()` / `Session.pair()` を共用する。登録モードでは全RX購読、現在のBLE暗号化、8200、8000、通信開始・正常終了まで確認し、履歴は読み取らない。通常syncへの自動フォールバック・キー新規生成・bond削除は追加していない。
+
+SelfCareのsync要求を使って既存キーを渡すため、登録成功時は空の履歴配列を返す。HomeHubは `lastRegistration` と `lastSync` を分離。SelfCare側は0件追加の成功ジョブとなり、待ち受け成功時刻を更新する。直後の通常再接続・USB比較は手動syncで行い、自動保存試験は既存の1時間の抑制期間後に行う。コード・スキーマ・抑制時刻DBは変更しない。
+
+47件のPython試験、38件のTypeScript試験、Node 24型検査・ビルドが成功。USBとM5GOの登録送信バイト列・通知順序の完全一致、認証拒否・不確実なキー書込み・キャンセル・暗号化失敗・終了失敗での停止、予約期限・消費・偽装フラグ無効化・結果の区別を確認した。PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。タグv0.3.30はmain `a5728ae6c6842a75ba56e5ac4aa7e28f2c686b12` と一致する。実験firmwareは `02f85bf` のまま。
+
+実機登録・通常再接続・USB登録の保持は未検証。限定監視 `secrets/watch-usb-registration-isolated.py` とその11件の模擬試験を準備済み。新しいP表示確認までOmron登録を行わない。登録成功を履歴取得成功とは扱わず、8200/8000/開始・終了と暗号化・予約消費が確認できた場合だけ次の通常転送へ進む。
+
+QNAP v0.3.30反映後、updater success/busy false、health ok/version 0.3.30、radio available/running/lowIo true、USB経路、M5GO API接続、予約pending false、SelfCare listener ready/busy false/errorなしを確認。これは実機の体組成計登録成功ではない。

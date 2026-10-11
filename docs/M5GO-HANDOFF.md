@@ -2,7 +2,7 @@
 
 ## 現在の状態
 
-M5GO経由の履歴取得・通常再接続・新規測定の自動保存は未達。現在、物理操作を待つ試験は起動していない。USB経路・元のHBF自動同期へ復帰し、SelfCare listener ready/busy false/errorなし、登録予約pending falseを確認済み。同じ登録・解除の反復は行わない。
+M5GO経由の履歴取得・通常再接続・新規測定の自動保存は未達。v0.3.30反映後、USB経路・元のHBF自動同期、SelfCare listener ready/busy false/errorなし、登録予約pending falseを確認済み。現在はUSB共通のOmron登録を1回試す限定監視が新しいP表示の確認待ち。実行時点の待機・復帰状態は非公開checkpointと監視結果を優先する。同じ登録・解除の反復は行わない。
 
 **最新の対照試験:** M5GO登録試験後のUSB通常同期は、再登録・アプリキー書込みなしで `state:done`、既存キー応答 `8100`、履歴通知93件、終了opcode 15、`stage:completed`。93測定という意味ではない。その後、新しい短押し確認でM5GO通常同期を1回実行したが、接続番号7は保存bondありからHCI status 6（PIN or Key Missing）/ GAP97で失敗。アプリキー送信前・履歴通知0件で停止した。USB同期が介在したため、この試験単独では無介入のbond保持失敗と扱わない。
 
@@ -10,7 +10,7 @@ M5GO経由の履歴取得・通常再接続・新規測定の自動保存は未�
 
 **モードの交絡:** USBの `8100` は通常通信、M5GOの `8101` はP（登録）モード。経路だけを変えた比較ではなく、Pでの拒否からキー失効やMAC紐付けを断定しない。最新の通常M5GO失敗はBLE暗号化段階であり、アプリ認証とは区別する。
 
-PR #42のCCCD通知停止修正をv0.3.29として公開・QNAPへ反映済み。mainは `f80421f`。PR CI `38180323995`、main CI `38180494313`、Docker公開 `38180494333` は成功。実Bleakを通す回帰を含む41件のPython試験が成功。firmwareは `02f85bf`、実験PR #36はdraft・次候補版v0.3.30。
+PR #43のUSB共通Omron登録をv0.3.30として公開・QNAPへ反映済み。mainは `a5728ae`。PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。47件のPython試験と38件のTypeScript試験・型検査・ビルドが成功。QNAP updater success/busy false、health 0.3.30、radio available/running/lowIo trueを確認。firmwareは `02f85bf`、実験PR #36はdraft・次候補版v0.3.31。
 
 ## 再開後の実測
 
@@ -23,9 +23,11 @@ PR #42のCCCD通知停止修正をv0.3.29として公開・QNAPへ反映済み�
 
 ## 次の操作と確認境界
 
-ユーザーの依頼で[USBとの登録比較](M5GO-USB-REGISTRATION-COMPARISON.md)を作成。実コードのオフライン6ケース比較で、USBはOmron登録opcode 2/0と開始・終了、M5GOはBLE登録と既存キーopcode 1のみという差を確認。USBの `Session` 共用案を記録したが、同じキー値の登録でもUSB側の登録保持は未確認であり、製品コードへの登録経路追加・実機再登録は未実施。通知順序だけの再試験や、根拠のないBLE設定変更は行わない。
+ユーザーの比較後の「進めて」を受け、[USB共通の登録](M5GO-APPLICATION-REGISTRATION.md)を実装・公開・反映した。既存キーの値を使用するが、体組成計内のUSB接続元登録を保持することは未検証。新規キー生成や追加のbond解除は許可・実施していない。
 
-追加の物理試験は未設定。接続元の登録とアプリキーの関係を調べ、既存USB認証を保持する要件に照らして次の設計を検討する。既存アプリキーの再発行、BlueZ bond削除、他型番のEEPROM書込み、SelfCareのソース・スキーマ変更は行わない。別キー登録や既存キーの再登録は実施していない。
+次は新しいP表示を確認し、`secrets/watch-usb-registration-isolated.py` のコマンドファイル `secrets/m5go-usb-registration-isolated-command.txt` に `bond` を1回投入する。登録はUSBの基底Sessionを使い、8200→8000→通信開始・正常終了を確認する。成功時のみ新しい通常短押し確認を待ち、`sync` を1回投入する。終了・失敗・期限切れでUSBと元の自動同期へ復帰。予約は新しい `prepare-application-registration` で、従来のBLE-only許可と区別する。過去のP表示・解除承認は再利用しない。
+
+SelfCare上は登録要求もsyncジョブのため、登録成功は0件追加・待ち受け成功時刻更新となる。登録を履歴取得成功と混同しない。直後のM5GO通常通信とUSB保持確認は手動sync。自動保存試験は既存の1時間の抑制期間後に行い、時刻DBを変更しない。限定監視の11件の模擬試験は成功。実機の新しい登録・再接続・USB共存は未検証。
 
 非公開証拠：`secrets/m5go-cccd-backend-isolated-result.json`、`secrets/v0329-usb-key-validity-trial.json`、`secrets/m5go-v0329-normal-only-result.json`。復帰確認：`secrets/v0329-normal-restored-listener.json`。非公開の現在地は `secrets/m5go-hardware-acceptance.json`、詳しい結果は [受入記録](M5GO-ACCEPTANCE.md)。以下は中断時点の履歴であり、現在の版・次操作には上記を使う。
 
