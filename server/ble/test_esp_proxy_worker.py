@@ -32,6 +32,8 @@ class Peripheral:
         self.fail = None
         self.bonds = 0
         self.bond_notifications = []
+        self.notification_changes = []
+        self.require_staged = False
         self.services = SimpleNamespace(get_service=lambda _: True,
                                         get_characteristic=lambda _: SimpleNamespace(properties=['write']))
 
@@ -50,17 +52,28 @@ class Peripheral:
         self.bonds += 1
 
     async def start_notify(self, char, callback):
+        self.notification_changes.append(('start', char))
         self.notifications[char] = callback
         if self.fail == 'notify':
             raise ConnectionError()
 
+    async def stop_notify(self, char):
+        self.notification_changes.append(('stop', char))
+        if self.fail == 'stop_notify':
+            raise ConnectionError('CCCD transition failed')
+        self.notifications.pop(char, None)
+
     async def write_gatt_char(self, char, data, response):
         self.writes.append((char, bytes(data)))
         if char == protocol.UNLOCK:
+            if self.require_staged and set(self.notifications) != {protocol.RX[0], protocol.UNLOCK}:
+                raise AssertionError('Extra data subscriptions before key authentication')
             status = b'\x81\x01' if self.fail == 'auth' else b'\x81\x00'
             self.notifications[char](char, status)
             return
         opcode, address, length = data[1], int.from_bytes(data[3:5], 'big'), data[5]
+        if self.require_staged and set(self.notifications) != set(protocol.RX):
+            raise AssertionError('Incorrect subscriptions at memory transfer')
         if self.fail == 'read' and opcode == 1:
             raise ConnectionError('lost API')
         if self.fail == 'close' and opcode == 15:
@@ -188,7 +201,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import AsyncMock, Mock
         async def authenticated():
             self.assertEqual(self.client.writes, [])
-            self.assertEqual(set(self.client.notifications), set(protocol.RX) | {protocol.UNLOCK})
+            self.assertEqual(set(self.client.notifications), {protocol.RX[0], protocol.UNLOCK})
         gate = SimpleNamespace(connected=AsyncMock(), authenticated=authenticated, mark=Mock())
         self.remote.prepare_security = AsyncMock(return_value=gate)
         result = await operate(self.request, {"slots": [], "rx_notifications": 0}, self.remote.factory)
@@ -215,7 +228,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         result = await operate(self.request, None, self.remote.factory)
         self.assertFalse(result['application_key_changed'])
         self.assertEqual(self.client.bonds, 1)
-        self.assertEqual(self.client.bond_notifications, [set(protocol.RX) | {protocol.UNLOCK}])
+        self.assertEqual(self.client.bond_notifications, [{protocol.RX[0], protocol.UNLOCK}])
         self.assertEqual(self.client.writes, [])
 
     async def test_explicit_bond_subscription_failure_aborts_without_pairing(self):
@@ -272,6 +285,7 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bond_and_existing_key_history_share_one_connection(self):
         gate = await self.bond_session_gate()
+        self.client.require_staged = True
         from unittest.mock import AsyncMock
         self.client.connect = AsyncMock(wraps=self.client.connect)
         async def authenticated():
@@ -292,6 +306,49 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['diagnostic']['explicit_bond_session'])
         self.assertEqual(trace['stage'], 'completed')
         self.assertTrue(self.client.disconnected and self.remote.closed)
+
+    async def test_normal_sync_stages_notifications_and_never_pairs(self):
+        self.client.require_staged = True
+        result = await operate(self.request, None, self.remote.factory)
+        self.assertEqual(len(result['records']), 2)
+        self.assertEqual(self.client.notification_changes,
+                         [('start', protocol.RX[0]), ('start', protocol.UNLOCK), ('stop', protocol.UNLOCK)] +
+                         [('start', char) for char in protocol.RX[1:]])
+        self.assertEqual(self.client.bonds, 0)
+
+    async def test_rejected_key_keeps_extra_channels_off_and_never_starts_memory(self):
+        self.client.fail = 'auth'
+        with self.assertRaises(ValueError):
+            await operate(self.request, {}, self.remote.factory)
+        self.assertEqual(self.client.notification_changes, [('start', protocol.RX[0]), ('start', protocol.UNLOCK)])
+        self.assertEqual(len(self.client.writes), 1)
+
+    async def test_notification_transition_failures_stop_before_memory(self):
+        for phase in ('stop_notify', 'extra_notify'):
+            with self.subTest(phase=phase):
+                client = Peripheral(); client.fail = phase
+                if phase == 'extra_notify':
+                    original = client.start_notify
+                    async def start(char, callback):
+                        if char == protocol.RX[2]:
+                            raise ConnectionError('RX2 setup failed')
+                        await original(char, callback)
+                    client.start_notify = start
+                remote = Remote(client)
+                trace = {}
+                with self.assertRaises(ConnectionError):
+                    await operate(self.request, trace, remote.factory)
+                self.assertEqual(trace['stage'], 'subscribe_history')
+                self.assertEqual(len(client.writes), 1)
+                self.assertTrue(client.disconnected and remote.closed)
+
+    async def test_hbf_proxy_session_rejects_key_programming(self):
+        from esp_proxy_worker import HbfProxySession
+        session = HbfProxySession(self.client)
+        for opcode, expected in ((0, 0x80), (2, 0x82)):
+            with self.assertRaises(ValueError):
+                await session.unlock(opcode, bytes(16), expected)
+        self.assertEqual(self.client.writes, [])
 
     async def test_bond_session_missing_gate_or_failed_auth_never_sends_key(self):
         from unittest.mock import AsyncMock
