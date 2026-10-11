@@ -15,7 +15,7 @@ const checkIntervalMs = Math.max(60 * 60 * 1000, Number(process.env.UPDATE_CHECK
 const configFile = path.join(dataDir, 'config.json');
 const stateFile = path.join(dataDir, 'state.json');
 const testedMatterbridgeRef = `${image}:matterbridge-tested`;
-const radioControl = createRadioControl({ command, projectDir, composeProject,
+const radioControl = createRadioControl({ command: silentDockerCommand, projectDir, composeProject,
   overlay: '/app/compose.radio-low-io.yaml' });
 
 async function readSecret(name) {
@@ -109,6 +109,34 @@ async function command(args, options = {}) {
     child.on('close', code => {
       if (code === 0) resolve(stdout.trim());
       else reject(new Error(`${args.join(' ')} failed (${code}): ${stderr.trim() || stdout.trim()}`));
+    });
+  });
+}
+
+// Radio status must NEVER stream Docker inspect JSON (which can contain
+// credentials/environment) into the updater's persistent stdout log.
+async function silentDockerCommand(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(args[0], args.slice(1), {
+      env: process.env, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = ''; let stderr = '';
+    let exceeded = false;
+    const timer = setTimeout(() => child.kill('SIGKILL'), 105000);
+    child.stdout?.on('data', chunk => {
+      stdout += chunk.toString();
+      if (stdout.length > 1024 * 1024) { exceeded = true; child.kill('SIGKILL'); }
+    });
+    child.stderr?.on('data', chunk => {
+      stderr += chunk.toString();
+      if (stderr.length > 64 * 1024) { exceeded = true; child.kill('SIGKILL'); }
+    });
+    child.on('error', error => { clearTimeout(timer); reject(new Error(error.message)); });
+    child.on('close', code => {
+      clearTimeout(timer);
+      if (code === 0 && !exceeded) resolve(stdout.trim());
+      else reject(new Error('Docker radio operation failed (' +
+        (exceeded ? 'output-limit' : 'exit=' + code) + ')'));
     });
   });
 }
@@ -284,7 +312,7 @@ async function checkTestedMatterbridge() {
 }
 
 async function checkForUpdates({ triggerAuto = true } = {}) {
-  if (busy) return statusPayload();
+  if (busy || radioControl.busy) return statusPayload();
   await Promise.all([checkHomeHubRelease(), checkTestedMatterbridge()]);
   await saveJson(stateFile, state);
 
@@ -299,7 +327,7 @@ async function checkForUpdates({ triggerAuto = true } = {}) {
 }
 
 async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
-  if (busy) return;
+  if (busy || radioControl.busy) return;
   if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error('No valid stable release is selected');
   busy = true;
   const version = normalizeVersion(tag);
@@ -372,7 +400,7 @@ async function applyReleaseUpdate(tag = state.latestTag, automatic = false) {
 }
 
 async function applyTestedMatterbridge(automatic = false) {
-  if (busy) return;
+  if (busy || radioControl.busy) return;
   busy = true;
   const matter = state.matterbridge;
   let oldMatter;
@@ -491,7 +519,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, statusPayload());
     }
     if (req.method === 'POST' && req.url === '/apply') {
-      if (busy) return send(res, 409, { error: 'Update already in progress', ...statusPayload() });
+      if (busy || radioControl.busy) return send(res, 409, { error: 'Update or radio action already in progress', ...statusPayload() });
       const body = await readBody(req);
       const tag = body.tag || state.latestTag;
       if (tag === 'matterbridge-tested') {
