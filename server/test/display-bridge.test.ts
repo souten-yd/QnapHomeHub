@@ -43,7 +43,7 @@ it('persists read-only settings, counts only an acknowledged update, and disable
   expect(spawn.mock.calls[0]![1]).toEqual(['/app/ble/esp_display_bridge.py', '--config',
     path.join(directory, 'm5go-display.json'), '--proxy-config', path.join(directory, 'm5go.json')]);
   const saved = JSON.parse(await fs.readFile(path.join(directory, 'm5go-display.json'), 'utf8'));
-  expect(saved).toMatchObject({ enabled: true, selfcare_url: 'http://127.0.0.1:17863', interval_seconds: 60, profiles });
+  expect(saved).toMatchObject({ enabled: true, selfcare_url: 'http://127.0.0.1:17863', schedule: 'midnight', profiles });
   expect((await fs.stat(path.join(directory, 'm5go-display.json'))).mode & 0o777).toBe(0o600);
   worker.stdout.write('display: snapshot validated\n'); expect(bridge.status().lastAcceptedAt).toBeNull();
   worker.stdout.write('display: snapshot acc'); worker.stdout.write('epted\n');
@@ -104,4 +104,24 @@ it('routes display management outside the Bluetooth arbiter and watcher stop pat
     expect((await request({ action: 'display-status' })).body.enabled).toBe(true);
     expect(radio).not.toHaveBeenCalled(); expect(stopWatch).not.toHaveBeenCalled();
   } finally { await manager.cleanup(); }
+});
+
+
+it('reports the next Japan midnight and daily freshness without a polling interval', async () => {
+  const clock = vi.spyOn(Date, 'now');
+  try {
+    clock.mockReturnValue(Date.parse('2026-10-12T14:59:59Z'));
+    const worker = child(); spawn.mockReturnValue(worker);
+    await bridge.configure({ enabled: true, profiles });
+    expect(bridge.status()).toMatchObject({ schedule: 'midnight', timezone: 'Asia/Tokyo', intervalSeconds: null,
+      nextRefreshAt: Date.parse('2026-10-12T15:00:00Z'), lastAcceptedAt: null });
+    worker.stdout.write('display: snapshot accepted\n');
+    clock.mockReturnValue(Date.parse('2026-10-13T14:59:59Z'));
+    expect(bridge.status().stale).toBe(false);
+    clock.mockReturnValue(Date.parse('2026-10-13T16:00:00Z'));
+    expect(bridge.status().stale).toBe(true);
+    expect(bridge.status().nextRefreshAt).toBe(Date.parse('2026-10-13T15:00:00Z') + 86400000);
+    await bridge.configure({ enabled: false });
+    expect(bridge.status().nextRefreshAt).toBeNull();
+  } finally { clock.mockRestore(); }
 });

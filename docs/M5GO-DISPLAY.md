@@ -19,9 +19,9 @@ Physical screen/button quality and automatic new-measurement acceptance remain s
   `--` with fewer than two measured days. **平均** is the mean of those daily-last
   values, with the number of measured days shown. Fat changes use percentage points.
   These are arithmetic summaries, not health assessments.
-- No history: `測定なし`. No bridge update for over three minutes: `更新停止`,
+- No history: `測定なし`. No bridge update for over 25 hours: `更新停止`,
   while retaining the measurement timestamp and last good data. After reboot the
-  screen waits for a fresh snapshot; health data is not persisted on the M5GO.
+  screen waits until the next midnight snapshot; health data is not persisted on the M5GO.
 
 Previews use fabricated measurements and the real C++ drawing commands; physical
 LCD orientation, colors, font baselines and button operation still need checking.
@@ -32,20 +32,34 @@ LCD orientation, colors, font baselines and button operation still need checking
 ## Data path
 
 `esp_display_bridge.py` reads only SelfCare `GET /api/users` and `GET /api/records`.
-After SelfCare saves a successful sync, the next poll (normally within 60 seconds)
-pushes the latest result plus seven daily points through ESPHome's existing encrypted
-Native API. USB syncs and corrected/imported records are reflected as well.
+Scale synchronization still saves its result to QNAP immediately on completion.
+The display bridge independently reads that saved history **once daily at 00:00
+Asia/Tokyo** and pushes the latest result plus seven daily points through ESPHome's
+existing encrypted Native API. USB syncs and corrected/imported records are included
+in that midnight snapshot. There is no 60-second history polling and no immediate
+history read on startup, measurement arrival or configuration changes.
+
+Dispatch is allowed during the first minute of midnight, accounting for scheduling
+latency. If the service is unavailable throughout that minute, it waits until the
+following midnight; it does not catch up during the day. Before any HTTP read, it
+persists the attempted date. Failed reads, rejected updates and lost ACKs get no
+same-day automatic retry, including after a process restart. Local clock checks
+make no network requests. `--once` and `--check` remain explicit maintenance actions;
+the managed service never uses them.
 
 The bridge uses an ordinary API client, **never subscribes to Bluetooth advertisements
 or makes GATT calls**. It runs separately from the radio worker. It cannot create jobs,
 register a device, alter keys or bypass the one-hour gate. A rejected snapshot or lost
-ACK is retried only at the next display poll. It never retries the scale sync.
+ACK waits until the next midnight. It never retries the scale sync.
 
 Profiles must be explicit. Unknown users, mismatched user/kind, malformed values,
 partial/oversized weekly history and incompatible firmware fail closed. Payloads
 are at most 4096 bytes. Logs contain no measurements, database IDs, user names,
-addresses or keys; there is no disk cache. The optional container has read-only
-mounts/filesystem, no capabilities and no Bluetooth device access.
+addresses or keys; there is no measurement disk cache. Only the last attempted
+date is stored in `<config>.schedule.json` (mode 0600), with a lock file. Corrupt or
+unwritable schedule state stops the worker without fetching history. The optional
+container has read-only configuration/root filesystem, a separate writable schedule
+directory, no capabilities and no Bluetooth device access.
 
 ## Firmware preparation
 
@@ -88,7 +102,7 @@ navigation and stale status including `millis()` rollover.
 
 ## Bridge preparation
 
-### Managed QNAP service (v0.3.31)
+### Managed QNAP service (daily schedule from v0.3.32)
 
 HomeHub's radio container can supervise this separate display process. No SSH or
 extra container is needed. It is disabled by default and does not acquire radio
@@ -99,10 +113,11 @@ ownership. Using the existing authenticated `POST /api/m5go` management endpoint
 ```
 
 `{"action":"display-status"}` returns running/enabled state, profile count,
-last accepted update time and stale/error state, without returning health values
+the daily schedule/timezone, next scheduled midnight, last accepted update time
+and stale/error state, without returning health values
 or profile identifiers. Disable with `{"action":"display-config","patch":{"enabled":false}}`.
 Settings persist in the private radio directory and resume after service restart.
-The endpoint is fixed to local SelfCare port 17863, Japan time and a 60-second poll;
+The endpoint is fixed to local SelfCare port 17863 and midnight Japan time;
 this management API cannot set arbitrary URLs. Display actions bypass the Bluetooth
 operation queue and never interrupt a scale connection or its advertisement watcher.
 
@@ -112,8 +127,10 @@ Use this only when the managed service is disabled; do not run both.
 
 Copy `firmware/m5go/display-config.example.json` to private
 `data/m5go-display/config.json`; supply the selected SelfCare user IDs and aliases.
-`interval_seconds` accepts 60–120. QNAP uses the host-network SelfCare endpoint
+Use `"schedule": "midnight"`; legacy `interval_seconds` is ignored. QNAP uses the host-network SelfCare endpoint
 `http://127.0.0.1:17863`; adapt it if the actual deployment differs.
+The optional Compose service stores attempted dates in `data/m5go-display-schedule`.
+Keep this state across restarts and upgrades to prevent duplicate midnight attempts.
 
 Read-only preparation check (does **not** connect to M5GO):
 
@@ -138,6 +155,8 @@ Do not run a second bridge alongside it. To stop the feature, stop only
 
 ## Preparation evidence (2026-10-12)
 
+- Daily scheduling tests: no startup/minute fetch, JST midnight window, no retry after
+  failure/restart, missed-slot skip, date-only state and corrupt-state rejection.
 - Bridge unit tests: user isolation, Japan-midnight boundary, last-per-day semantics,
   empty/missing/future data, previous-measurement delta, pagination and encrypted ACK.
 - Display header host checks and synthetic latest/weight/body-fat screen previews.
