@@ -2,10 +2,13 @@ import asyncio
 import json
 from types import SimpleNamespace
 import unittest
+import tempfile
+from pathlib import Path
+from unittest.mock import patch, AsyncMock
 from urllib.parse import parse_qs, urlsplit
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config
+from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config, midnight_slot, claim_day, run
 
 NOW = stamp('2026-10-12T03:00:00+00:00')
 PROFILE = {'user_id': 'alice', 'label': 'USER 1'}
@@ -89,7 +92,7 @@ class SummaryTest(unittest.TestCase):
 
     def test_unknown_user_and_invalid_config_rejected(self):
         with self.assertRaises(ValueError): build_snapshot(CONFIG, NOW, lambda _: [])
-        for patch in ({'profiles':[]}, {'interval_seconds':1}, {'profiles':[PROFILE,PROFILE]},
+        for patch in ({'profiles':[]}, {'schedule':'every-minute'}, {'profiles':[PROFILE,PROFILE]},
                       {'profiles':[PROFILE | {'label':'X'*17}]}, {'selfcare_url':'file:///tmp/db'}):
             with self.assertRaises(ValueError): validate_config(CONFIG | patch)
 
@@ -117,6 +120,74 @@ class PushTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((ValueError,TimeoutError)): await push_snapshot(proxy,'{}',Client)
             self.assertEqual(events[-1],'disconnect')
             self.assertNotIn('display',events) if mode=='missing' else self.assertIn('display',events)
+
+
+class ScheduleTest(unittest.IsolatedAsyncioTestCase):
+    def test_jst_boundary_and_missed_slot(self):
+        zone = ZoneInfo('Asia/Tokyo')
+        for at, expected in (
+            ('2026-10-12T14:59:59Z', '2026-10-13T00:00:00+09:00'),
+            ('2026-10-12T15:00:00Z', '2026-10-13T00:00:00+09:00'),
+            ('2026-10-12T15:00:59Z', '2026-10-13T00:00:00+09:00'),
+            ('2026-10-12T15:01:00Z', '2026-10-14T00:00:00+09:00')):
+            self.assertEqual(midnight_slot(stamp(at), zone).isoformat(), expected)
+
+    def test_durable_claim_restart_rollback_and_corrupt_state(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / 'state.json'
+            self.assertTrue(claim_day(state, '2026-10-13'))
+            self.assertFalse(claim_day(state, '2026-10-13'))
+            self.assertFalse(claim_day(state, '2026-10-12'))
+            self.assertTrue(claim_day(state, '2026-10-14'))
+            self.assertEqual(state.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(state.read_text()), {'last_attempt_day':'2026-10-14'})
+            state.write_text('{bad')
+            with self.assertRaises(ValueError): claim_day(state, '2026-10-15')
+
+    async def test_no_startup_or_sixty_second_fetch_one_failed_attempt_and_restart(self):
+        class StopClock(Exception): pass
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / 'config.json'
+            # Old installed configuration must also use midnight, never its interval.
+            config.write_text(json.dumps(CONFIG | {'interval_seconds':60}))
+            current = NOW
+            sleeps = 0
+            async def sleep(seconds):
+                nonlocal current, sleeps
+                current += timedelta(seconds=seconds)
+                sleeps += 1
+                if sleeps == 5: raise StopClock()
+            with patch('esp_display_bridge.update', new_callable=AsyncMock, return_value=1) as update:
+                async def simulate(at):
+                    nonlocal current, sleeps
+                    current, sleeps = stamp(at), 0
+                    with self.assertRaises(StopClock):
+                        await run(config, 'unused', now=lambda:current, sleep=sleep)
+                await simulate('2026-10-12T03:00:00Z')
+                update.assert_not_called()  # startup and five local clock checks
+                await simulate('2026-10-12T14:59:59Z')
+                self.assertEqual(update.await_count, 1)
+                await simulate('2026-10-12T15:00:20Z')  # restart during the same minute
+                self.assertEqual(update.await_count, 1)
+                await simulate('2026-10-13T15:00:00Z')
+                self.assertEqual(update.await_count, 2)
+
+    async def test_suspended_process_skips_missed_midnight(self):
+        class StopClock(Exception): pass
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / 'config.json'
+            config.write_text(json.dumps(CONFIG))
+            current = stamp('2026-10-12T14:59:59Z')
+            sleeps = 0
+            async def sleep(seconds):
+                nonlocal current, sleeps
+                sleeps += 1
+                if sleeps == 2: raise StopClock()
+                current += timedelta(minutes=5)
+            with patch('esp_display_bridge.update', new_callable=AsyncMock) as update:
+                with self.assertRaises(StopClock):
+                    await run(config, 'unused', now=lambda:current, sleep=sleep)
+                update.assert_not_called()
 
 
 if __name__ == '__main__':

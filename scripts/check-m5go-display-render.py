@@ -88,7 +88,9 @@ int main() {
   dashboard.graph();std::cout<<draw()<<"\n";
   dashboard.next_user();assert(draw().find("USER 2") != std::string::npos);
   dashboard.next_user();assert(draw().find("USER 1") != std::string::npos);
-  esphome::clock_ms=180002;assert(draw().find("更新停止") != std::string::npos);
+  esphome::clock_ms=180002;assert(draw().find("更新停止") == std::string::npos);
+  esphome::clock_ms=24UL*3600000+1;assert(draw().find("更新停止") == std::string::npos);
+  esphome::clock_ms=25UL*3600000+2;assert(draw().find("更新停止") != std::string::npos);
   assert(dashboard.accept(input));assert(draw().find("更新停止") == std::string::npos);
   esphome::clock_ms=0xfffffff0;assert(dashboard.accept(input));
   esphome::clock_ms=20;assert(draw().find("更新停止") == std::string::npos);

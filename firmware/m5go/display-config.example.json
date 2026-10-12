@@ -1,7 +1,7 @@
 {
   "selfcare_url": "http://127.0.0.1:17863",
   "timezone": "Asia/Tokyo",
-  "interval_seconds": 60,
+  "schedule": "midnight",
   "profiles": [
     {"user_id": "REPLACE_WITH_SELFCARE_USER_ID", "label": "USER 1"}
   ]

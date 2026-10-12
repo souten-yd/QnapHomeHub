@@ -1,14 +1,16 @@
 """Read saved SelfCare records and push a small display snapshot over encrypted API.
 
-No Bluetooth discovery, connection, pairing, sync job, database write or disk cache.
+No Bluetooth discovery, connection, pairing, sync job or measurement disk cache.
 Run separately from the radio worker; failures cannot start a measurement sync.
 """
 import argparse
 import asyncio
 import base64
+import fcntl
 from datetime import datetime, time, timedelta, timezone
 import json
 import math
+import os
 from pathlib import Path
 import re
 import urllib.parse
@@ -93,9 +95,9 @@ def validate_config(config):
             raise ValueError('Display label must be 1..16 ASCII letters, numbers or spaces')
         seen.add(p['user_id'])
     ZoneInfo(config.get('timezone', 'Asia/Tokyo'))
-    interval = config.get('interval_seconds', 60)
-    if type(interval) is not int or not 60 <= interval <= 120:
-        raise ValueError('Display interval must be 60..120 seconds')
+    if config.get('schedule', 'midnight') != 'midnight':
+        raise ValueError('Display schedule must be midnight')
+    # Ignore legacy interval_seconds: old installations also stop polling.
     return config
 
 
@@ -126,7 +128,7 @@ def build_snapshot(config, now=None, get=read_json):
         for offset in range(0, 8000, 2000):
             page = fetch(since=since, limit=2000, offset=offset)
             if total is not None and total != page['total']:
-                raise ValueError('History changed during pagination; retry next poll')
+                raise ValueError('History changed during pagination; wait for next midnight')
             total = page['total']
             week.extend(page['records'])
             if len(week) == total:
@@ -165,26 +167,73 @@ async def push_snapshot(proxy, payload, client_factory=None):
         await client.disconnect()
 
 
-async def run(config_path, proxy_path, once=False, check=False):
+def midnight_slot(now, zone):
+    """Allow dispatch during 00:00; never catch up a missed midnight later."""
+    local = now.astimezone(zone)
+    today = datetime.combine(local.date(), time.min, zone)
+    if local < today + timedelta(minutes=1):
+        return today
+    return datetime.combine(local.date() + timedelta(days=1), time.min, zone)
+
+
+def claim_day(state_path, day):
+    """Persist BEFORE the read: failure, restart or a lost ACK cannot retry today.
+
+    Only the attempted calendar date is stored, never measurements. Locking also
+    prevents two workers sharing a state file from dispatching the same date.
+    A corrupt/unwritable state fails closed instead of risking duplicate reads.
+    """
+    state = Path(state_path)
+    with os.fdopen(os.open(str(state) + '.lock', os.O_CREAT | os.O_RDWR, 0o600), 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if state.exists():
+            saved = json.loads(state.read_text())['last_attempt_day']
+            if datetime.strptime(saved, '%Y-%m-%d').strftime('%Y-%m-%d') != saved:
+                raise ValueError('Invalid schedule state')
+            if saved >= day:
+                return False
+        temp = str(state) + '.tmp'
+        with os.fdopen(os.open(temp, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600), 'w') as out:
+            json.dump({'last_attempt_day': day}, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp, state)
+        return True
+
+
+async def update(config, proxy_path, check=False):
+    try:
+        payload = await asyncio.to_thread(build_snapshot, config)
+        if not check:
+            proxy = json.loads(Path(proxy_path).read_text())
+            async with asyncio.timeout(40):
+                await push_snapshot(proxy, payload)
+        # No names, IDs, health values, host addresses or keys in logs.
+        print('display: snapshot validated' if check else 'display: snapshot accepted', flush=True)
+        return 0
+    except Exception:
+        print('display: update unavailable; previous screen will become stale', flush=True)
+        return 1
+
+
+async def run(config_path, proxy_path, once=False, check=False, state_path=None,
+              now=lambda: datetime.now(timezone.utc), sleep=asyncio.sleep):
+    config = validate_config(json.loads(Path(config_path).read_text()))
+    if once or check:  # Explicit maintenance only; never used by the managed service.
+        return await update(config, proxy_path, check)
+    zone = ZoneInfo(config.get('timezone', 'Asia/Tokyo'))
+    state_path = state_path or str(config_path) + '.schedule.json'
+    due = midnight_slot(now(), zone)
+    print('display: midnight schedule ready', flush=True)
     while True:
-        interval = 60
-        try:
-            config = validate_config(json.loads(Path(config_path).read_text()))
-            interval = config.get('interval_seconds', 60)
-            payload = await asyncio.to_thread(build_snapshot, config)
-            if not check:
-                proxy = json.loads(Path(proxy_path).read_text())
-                async with asyncio.timeout(40):
-                    await push_snapshot(proxy, payload)
-            # No names, IDs, health values, host addresses or keys in logs.
-            print('display: snapshot validated' if check else 'display: snapshot accepted', flush=True)
-        except Exception:
-            print('display: update unavailable; previous screen will become stale', flush=True)
-            if once or check:
-                return 1
-        if once or check:
-            return 0
-        await asyncio.sleep(interval)
+        current = now()
+        if current >= due:
+            if current < due + timedelta(minutes=1) and claim_day(state_path, due.date().isoformat()):
+                await update(config, proxy_path)
+            # No retry, even after failure. A suspended process skips missed slots.
+            due = midnight_slot(max(now(), due + timedelta(minutes=1)), zone)
+        # Clock checks are local only: no HTTP, Native API, BLE or disk polling.
+        await sleep(max(0.01, min(60, (due - now()).total_seconds())))
 
 
 if __name__ == '__main__':
@@ -192,6 +241,7 @@ if __name__ == '__main__':
     parser.add_argument('--config', required=True)
     parser.add_argument('--proxy-config', default='/radio/m5go.json')
     parser.add_argument('--once', action='store_true')
+    parser.add_argument('--state', help='Persistent schedule state (attempted date only)')
     parser.add_argument('--check', action='store_true', help='Read and validate saved data only; no M5GO connection')
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(args.config, args.proxy_config, args.once, args.check)))
+    raise SystemExit(asyncio.run(run(args.config, args.proxy_config, args.once, args.check, args.state)))

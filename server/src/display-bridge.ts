@@ -52,8 +52,10 @@ export class DisplayBridge {
   status() {
     return { enabled: this.config.enabled, profileCount: this.config.profiles.length,
       running: Boolean(this.worker && this.worker.exitCode === null && this.worker.signalCode === null),
-      intervalSeconds: 60, lastAcceptedAt: this.lastAcceptedAt ?? null,
-      stale: !this.lastAcceptedAt || Date.now() - this.lastAcceptedAt > 180000, error: this.error ?? null };
+      schedule: 'midnight', timezone: 'Asia/Tokyo', intervalSeconds: null,
+      nextRefreshAt: this.config.enabled ? (Math.floor((Date.now() + 9 * 3600000) / 86400000) + 1) * 86400000 - 9 * 3600000 : null,
+      lastAcceptedAt: this.lastAcceptedAt ?? null,
+      stale: !this.lastAcceptedAt || Date.now() - this.lastAcceptedAt > 25 * 3600000, error: this.error ?? null };
   }
 
   configure(patch: unknown) {
@@ -66,7 +68,7 @@ export class DisplayBridge {
         this.worker = undefined;
         await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
         // Endpoint/timezone are fixed locally; this API cannot read arbitrary URLs.
-        const saved = { ...next, selfcare_url: 'http://127.0.0.1:17863', timezone: 'Asia/Tokyo', interval_seconds: 60 };
+        const saved = { ...next, selfcare_url: 'http://127.0.0.1:17863', timezone: 'Asia/Tokyo', schedule: 'midnight' };
         await fs.writeFile(this.file + '.tmp', JSON.stringify(saved) + '\n', { mode: 0o600 });
         await fs.rename(this.file + '.tmp', this.file);
         this.config = next;
