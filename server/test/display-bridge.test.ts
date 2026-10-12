@@ -13,7 +13,7 @@ import { SharedRadioManager, stopProcess } from '../src/shared-radio.js';
 let directory: string;
 let bridge: DisplayBridge;
 function child() {
-  const worker = Object.assign(new EventEmitter(), { stdout: new PassThrough(), pid: 999,
+  const worker = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stdin: new PassThrough(), pid: 999,
     exitCode: null as number | null, signalCode: null as string | null, kill: vi.fn() });
   worker.kill.mockImplementation((signal: string) => { worker.signalCode = signal; worker.emit('exit', null, signal); return true; });
   return worker;
@@ -124,4 +124,34 @@ it('reports the next Japan midnight and daily freshness without a polling interv
     await bridge.configure({ enabled: false });
     expect(bridge.status().nextRefreshAt).toBeNull();
   } finally { clock.mockRestore(); }
+});
+
+
+it('forwards only received configured HBF measurements without waiting for display or exposing keys', async () => {
+  const worker = child(); spawn.mockReturnValue(worker);
+  await bridge.configure({ enabled: true, profiles });
+  const write = vi.spyOn(worker.stdin, 'write');
+  const request = { action: 'sync', key: 'never-forward-key', device: { model: 'HBF-228T' } };
+  const record = { user_id: 'example', kind: 'body_composition', measured_at: '2026-10-12T00:00:00Z',
+    raw: 'private-raw', values: { weight: 70, body_fat: 25, extra: 'omit' } };
+  for (const [req, result] of [[{ ...request, action: 'pair' }, { records: [record] }],
+    [request, { records: [] }], [request, { error: 'failed', records: [record] }],
+    [request, { registration_only: true, records: [record] }],
+    [{ ...request, device: { model: 'HEM-6232T' } }, { records: [record] }],
+    [request, { records: [{ ...record, user_id: 'another' }] }]]) bridge.measurement(req, result);
+  expect(write).not.toHaveBeenCalled();
+  expect(bridge.measurement(request, { records: [record] })).toBeUndefined();
+  const message = String(write.mock.calls[0]![0]);
+  expect(JSON.parse(message)).toEqual({ event: 'measurement', records: [{ user_id: 'example', kind: 'body_composition',
+    measured_at: record.measured_at, values: { weight: 70, body_fat: 25 } }] });
+  expect(message).not.toContain('never-forward-key'); expect(message).not.toContain('private-raw');
+  expect(bridge.status().lastMeasurementAt).toBeNull();
+  worker.stdout.write('display: measurement accepted\n');
+  expect(bridge.status().lastMeasurementAt).not.toBeNull();
+  expect(JSON.stringify(bridge.status())).not.toContain('body_fat');
+  write.mockImplementation(() => { throw new Error('pipe full'); });
+  expect(() => bridge.measurement(request, { records: [record] })).not.toThrow();
+  expect(bridge.status().measurementError).toBe('Measurement display unavailable');
+  await bridge.configure({ enabled: false });
+  write.mockClear(); bridge.measurement(request, { records: [record] }); expect(write).not.toHaveBeenCalled();
 });

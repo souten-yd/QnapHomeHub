@@ -21,10 +21,16 @@ class Dashboard {
   bool accept(const std::string &payload) {
     if (payload.size() > 4096) return false;
     std::vector<Profile> next;
+    int active=-1;
     bool valid = esphome::json::parse_json(payload, [&](JsonObject root) -> bool {
       if (!root["schema"].is<int>() || root["schema"].as<int>() != 1 || !root["profiles"].is<JsonArray>()) return false;
       auto rows = root["profiles"].as<JsonArray>();
       if (rows.size() < 1 || rows.size() > 4) return false;
+      if (root.containsKey("active_profile")) {
+        if (!root["active_profile"].is<int>()) return false;
+        active=root["active_profile"].as<int>();
+        if (active < 0 || active >= static_cast<int>(rows.size())) return false;
+      }
       for (JsonObject row : rows) {
         Profile p;
         if (!text(row["label"], p.label, 16, false) || !text(row["measured"], p.measured, 16, true)) return false;
@@ -47,6 +53,8 @@ class Dashboard {
     });
     if (!valid) return false; // Atomic: malformed input never replaces the last good display.
     profiles_ = std::move(next);
+    if (active >= 0) selected_=active;
+    received_=active >= 0;
     if (selected_ >= profiles_.size()) selected_=0;
     updated_ = esphome::millis();
     return true;
@@ -67,7 +75,7 @@ class Dashboard {
     auto &p=profiles_[selected_];
     bool stale = static_cast<uint32_t>(esphome::millis()-updated_) > 25UL * 60 * 60 * 1000;
     d.print(12,6,small,cyan,p.label.c_str());
-    d.print(238,6,small,stale ? amber : gray,stale ? "更新停止" : "保存履歴");
+    d.print(238,6,small,stale ? amber : gray,stale ? "更新停止" : (received_ ? "最新結果" : "保存履歴"));
     d.print(12,28,small,gray,p.measured.empty() ? "測定なし" : p.measured.c_str());
     if (page_ == 0) {
       d.print(12,56,small,gray,"体重 kg");
@@ -135,6 +143,7 @@ class Dashboard {
   size_t selected_=0;
   int page_=0;
   uint32_t updated_=0;
+  bool received_=false;
 };
 inline Dashboard dashboard;
 }  // namespace health_display

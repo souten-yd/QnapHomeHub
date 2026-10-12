@@ -32,6 +32,8 @@ export class DisplayBridge {
   private closing = false;
   private configuring = false;
   private lastAcceptedAt?: number;
+  private lastMeasurementAt?: number;
+  private measurementError?: string;
   private error?: string;
   private readonly queue = new SerialQueue();
   private readonly file: string;
@@ -55,6 +57,7 @@ export class DisplayBridge {
       schedule: 'midnight', timezone: 'Asia/Tokyo', intervalSeconds: null,
       nextRefreshAt: this.config.enabled ? (Math.floor((Date.now() + 9 * 3600000) / 86400000) + 1) * 86400000 - 9 * 3600000 : null,
       lastAcceptedAt: this.lastAcceptedAt ?? null,
+      lastMeasurementAt: this.lastMeasurementAt ?? null, measurementError: this.measurementError ?? null,
       stale: !this.lastAcceptedAt || Date.now() - this.lastAcceptedAt > 25 * 3600000, error: this.error ?? null };
   }
 
@@ -73,10 +76,32 @@ export class DisplayBridge {
         await fs.rename(this.file + '.tmp', this.file);
         this.config = next;
         this.retryAt = 0; this.error = undefined; this.lastAcceptedAt = undefined;
+        this.lastMeasurementAt = undefined; this.measurementError = undefined;
       } finally { this.configuring = false; }
       this.maintain();
       return this.status();
     });
+  }
+
+  /** Copy only completed HBF measurements; never block or retry the saving path. */
+  measurement(request: any, result: any) {
+    if (!this.config.enabled || this.closing || this.configuring || request?.action !== 'sync' ||
+        request.device?.model !== 'HBF-228T' || result?.registration_only || result?.error ||
+        !Array.isArray(result?.records) || !result.records.length) return;
+    const input = this.worker?.stdin;
+    if (!input || input.destroyed || !input.writable || input.writableLength > 65536 || result.records.length > 128) {
+      this.measurementError = 'Measurement display unavailable'; return;
+    }
+    try {
+      const users = new Set(this.config.profiles.map(p => p.user_id));
+      const records = result.records.filter((r: any) => r && users.has(r.user_id) && r.kind === 'body_composition')
+        .map((r: any) => ({ user_id: r.user_id, kind: r.kind, measured_at: r.measured_at,
+          values: { weight: r.values?.weight, body_fat: r.values?.body_fat } }));
+      if (!records.length) return;
+      const event = JSON.stringify({ event: 'measurement', records }) + '\n';
+      if (Buffer.byteLength(event) > 60000) throw new Error('Display event too large');
+      input.write(event, error => { if (error) this.measurementError = 'Measurement display unavailable'; });
+    } catch { this.measurementError = 'Measurement display unavailable'; }
   }
 
   maintain() {
@@ -84,8 +109,9 @@ export class DisplayBridge {
     try {
       const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_display_bridge.py',
         '--config', this.file, '--proxy-config', path.join(this.directory, 'm5go.json')],
-      { stdio: ['ignore', 'pipe', 'ignore'] });
+      { stdio: ['pipe', 'pipe', 'ignore'] });
       this.worker = child;
+      child.stdin!.on('error', () => { this.measurementError = 'Measurement display unavailable'; });
       let buffer = '';
       child.stdout!.setEncoding('utf8');
       child.stdout!.on('data', chunk => {
@@ -97,6 +123,9 @@ export class DisplayBridge {
           const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
           if (line === 'display: snapshot accepted') { this.lastAcceptedAt = Date.now(); this.error = undefined; }
           else if (line === 'display: update unavailable; previous screen will become stale') this.error = 'Display update unavailable';
+          else if (line === 'display: measurement accepted') {
+            this.lastAcceptedAt = Date.now(); this.lastMeasurementAt = Date.now(); this.measurementError = undefined;
+          } else if (line === 'display: measurement unavailable') this.measurementError = 'Measurement display unavailable';
         }
       });
       const failed = () => {
