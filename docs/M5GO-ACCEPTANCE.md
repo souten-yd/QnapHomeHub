@@ -197,3 +197,17 @@ SelfCareのsync要求を使って既存キーを渡すため、登録成功時�
 実機登録・通常再接続・USB登録の保持は未検証。限定監視 `secrets/watch-usb-registration-isolated.py` とその11件の模擬試験を準備済み。新しいP表示確認までOmron登録を行わない。登録成功を履歴取得成功とは扱わず、8200/8000/開始・終了と暗号化・予約消費が確認できた場合だけ次の通常転送へ進む。
 
 QNAP v0.3.30反映後、updater success/busy false、health ok/version 0.3.30、radio available/running/lowIo true、USB経路、M5GO API接続、予約pending false、SelfCare listener ready/busy false/errorなしを確認。これは実機の体組成計登録成功ではない。
+
+### v0.3.30のUSB共通登録：実機成功
+
+ユーザーの新しいP表示確認を受け、限定監視からアプリ登録を1回実行。現在のBLE暗号化成功、Omron登録開始応答 `8200`、既存キー値の登録応答 `8000`、通信開始・正常終了opcode 15の正常応答を確認した。SelfCareジョブは `done`、診断は `registration_completed`。コントローラーの暗号化成功と接続番号の一致、予約消費、他HBFジョブの介入なしを監視が確認した。履歴はまだ読んでいない。
+
+登録成功後もHBF自動同期OFF・M5GO経路を保持し、新しい通常短押し表示の確認待ち。通常再接続・履歴取得・USB登録保持・自動保存は未検証。証拠は `secrets/m5go-usb-registration-isolated-result.json`。再登録はせず、次は通常syncを1回だけ実行する。
+
+### v0.3.30：M5GOの通常再接続・履歴取得成功
+
+登録成功後、新しい通常短押し表示の確認を受け、M5GO経由のsyncを1回実行した。接続番号9のcontrollerは `[[105,0,1]]`（暗号化成功）。`link_security:authenticated`、既存キー認証 `8100`、履歴通知93件、通信終了opcode 15、`stage:completed`、SelfCareジョブ `done` を確認。返却した履歴は30件で、保存結果は追加0件・重複30件・日時不正0件。93は通知数であり測定数ではない。
+
+登録から通常同期まで他HBFジョブの介入なし、再登録なし。USB共通登録後に通常の保存bondによる再接続・アプリ認証・履歴取得が成功した。接続元MACとの厳密な紐付け仕様や、登録のどの段階が保持を確定するかまでは証明しない。
+
+限定監視は終了し、USB経路・元のHBF自動同期ONへ復帰。API接続、予約pending false、SelfCare listener ready/busy false/errorなしを再確認。証拠は `secrets/m5go-usb-registration-isolated-result.json`、復帰確認は `secrets/v0330-after-normal-proxy.json` と `secrets/v0330-after-normal-listener.json`。次はUSBの再登録なしの通常同期を確認する。M5GO再起動後の復帰と新規測定の自動保存は未検証。
