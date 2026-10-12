@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { ProxyConfigStore, publicProxyConfig } from './proxy-config.js';
 import { ProxyBondSession } from './proxy-bond-session.js';
 import { RadioArbiter } from './radio-arbiter.js';
+import { DisplayBridge } from './display-bridge.js';
 import type { AppConfig, DiscoveredDevice } from './types.js';
 
 type Action = 'press' | 'on' | 'off' | 'status' | 'power' | 'forceOff';
@@ -26,6 +27,7 @@ export async function stopProcess(child: ChildProcess | undefined): Promise<void
 
 export class SharedRadioManager {
   private readonly proxyStore: ProxyConfigStore;
+  private readonly displayBridge: DisplayBridge;
   private readonly proxyBondSession = new ProxyBondSession();
   private proxyWatcher?: ChildProcess;
   private proxyStarting?: Promise<void>;
@@ -59,6 +61,7 @@ export class SharedRadioManager {
   constructor(private readonly getConfig: () => AppConfig, private readonly token: string,
     private readonly secret: string, private readonly debug?: Debug, proxyDirectory = '/radio') {
     this.proxyStore = new ProxyConfigStore(proxyDirectory);
+    this.displayBridge = new DisplayBridge(proxyDirectory, stopProcess);
     this.arbiter = new RadioArbiter({
       stopHomeHub: request => this.stopHomeHub(request), stopBlueZ: () => this.stopBlueZ(),
       resumeSelfCare: () => this.startBlueZ(),
@@ -468,6 +471,7 @@ export class SharedRadioManager {
 
   async listen(socketPath = '/radio/ble.sock'): Promise<void> {
     await this.proxyStore.load();
+    await this.displayBridge.load();
     await fs.mkdir(path.dirname(socketPath), { recursive: true, mode: 0o700 });
     await fs.rm(socketPath, { force: true });
     this.socketServer = http.createServer(async (req, res) => {
@@ -479,6 +483,8 @@ export class SharedRadioManager {
         for await (const chunk of req) { body += chunk; if (body.length > 65536) throw new Error('Request too large'); }
         const request = JSON.parse(body);
         if (req.url === '/proxy') {
+          if (request.action === 'display-status') return reply(200, this.displayBridge.status());
+          if (request.action === 'display-config') return reply(200, await this.displayBridge.configure(request.patch));
           if (request.action === 'status') return reply(200, this.proxyStatus());
           if (!['config', 'probe', 'bond', 'prepare-bond-session', 'prepare-application-registration', 'cancel-bond-session'].includes(request.action)) throw new Error('Unknown proxy operation');
           return reply(200, await this.arbiter.run('selfcare', { ...request, action: 'proxy-' + request.action }));
@@ -497,13 +503,17 @@ export class SharedRadioManager {
     });
     await new Promise<void>((resolve, reject) => { this.socketServer!.once('error', reject); this.socketServer!.listen(socketPath, () => resolve()); });
     await fs.chmod(socketPath, 0o600);
-    this.watchTimer = setInterval(() => { void this.maintainWatch().catch(error => { this.watchError = String(error); }); }, 2000);
+    this.watchTimer = setInterval(() => {
+      this.displayBridge.maintain();
+      void this.maintainWatch().catch(error => { this.watchError = String(error); });
+    }, 2000);
     this.watchTimer.unref();
   }
 
   async cleanup(): Promise<void> {
     this.closing = true;
     clearInterval(this.watchTimer);
+    await this.displayBridge.close();
     await this.stopWatcher();
     this.socketServer?.close();
     await stopProcess(this.pythonWorker);

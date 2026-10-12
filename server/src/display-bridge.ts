@@ -1,0 +1,117 @@
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { SerialQueue } from './queue.js';
+
+interface Profile { user_id: string; label: string }
+interface DisplayConfig { enabled: boolean; profiles: Profile[] }
+const defaults: DisplayConfig = { enabled: false, profiles: [] };
+
+function validate(previous: DisplayConfig, patch: unknown): DisplayConfig {
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid display configuration');
+  const p = patch as Record<string, unknown>;
+  if (Object.keys(p).some(k => !['enabled', 'profiles'].includes(k))) throw new Error('Unknown display setting');
+  const next = { ...previous, ...p } as DisplayConfig;
+  if (typeof next.enabled !== 'boolean' || !Array.isArray(next.profiles) || next.profiles.length > 4 ||
+      (next.enabled && !next.profiles.length)) throw new Error('Display requires one to four users');
+  const seen = new Set<string>();
+  for (const profile of next.profiles) {
+    if (!profile || typeof profile !== 'object' || Object.keys(profile).some(k => !['user_id', 'label'].includes(k)) ||
+        typeof profile.user_id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(profile.user_id) || seen.has(profile.user_id) ||
+        typeof profile.label !== 'string' || !/^[A-Za-z0-9 ._-]{1,16}$/.test(profile.label)) throw new Error('Invalid display user');
+    seen.add(profile.user_id);
+  }
+  return structuredClone(next);
+}
+
+/** A separate process with no radio ownership or GATT calls. Disabled by default. */
+export class DisplayBridge {
+  private config = structuredClone(defaults);
+  private worker?: ChildProcess;
+  private retryAt = 0;
+  private closing = false;
+  private configuring = false;
+  private lastAcceptedAt?: number;
+  private error?: string;
+  private readonly queue = new SerialQueue();
+  private readonly file: string;
+
+  constructor(private readonly directory: string, private readonly stop: (child: ChildProcess | undefined) => Promise<void>) {
+    this.file = path.join(directory, 'm5go-display.json');
+  }
+
+  async load() {
+    try {
+      const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      this.config = validate(defaults, { enabled: saved.enabled, profiles: saved.profiles });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.error = 'Display configuration unavailable';
+    }
+  }
+
+  status() {
+    return { enabled: this.config.enabled, profileCount: this.config.profiles.length,
+      running: Boolean(this.worker && this.worker.exitCode === null && this.worker.signalCode === null),
+      intervalSeconds: 60, lastAcceptedAt: this.lastAcceptedAt ?? null,
+      stale: !this.lastAcceptedAt || Date.now() - this.lastAcceptedAt > 180000, error: this.error ?? null };
+  }
+
+  configure(patch: unknown) {
+    return this.queue.run(async () => {
+      if (this.closing) throw new Error('Display service is stopping');
+      const next = validate(this.config, patch);
+      this.configuring = true;
+      try {
+        await this.stop(this.worker);
+        this.worker = undefined;
+        await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
+        // Endpoint/timezone are fixed locally; this API cannot read arbitrary URLs.
+        const saved = { ...next, selfcare_url: 'http://127.0.0.1:17863', timezone: 'Asia/Tokyo', interval_seconds: 60 };
+        await fs.writeFile(this.file + '.tmp', JSON.stringify(saved) + '\n', { mode: 0o600 });
+        await fs.rename(this.file + '.tmp', this.file);
+        this.config = next;
+        this.retryAt = 0; this.error = undefined; this.lastAcceptedAt = undefined;
+      } finally { this.configuring = false; }
+      this.maintain();
+      return this.status();
+    });
+  }
+
+  maintain() {
+    if (this.closing || this.configuring || !this.config.enabled || this.worker || Date.now() < this.retryAt) return;
+    try {
+      const child = spawn('/opt/ble-proxy/bin/python', ['/app/ble/esp_display_bridge.py',
+        '--config', this.file, '--proxy-config', path.join(this.directory, 'm5go.json')],
+      { stdio: ['ignore', 'pipe', 'ignore'] });
+      this.worker = child;
+      let buffer = '';
+      child.stdout!.setEncoding('utf8');
+      child.stdout!.on('data', chunk => {
+        if (this.worker !== child) return;
+        buffer += chunk;
+        if (buffer.length > 4096) { child.kill('SIGTERM'); return; }
+        let end: number;
+        while ((end = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
+          if (line === 'display: snapshot accepted') { this.lastAcceptedAt = Date.now(); this.error = undefined; }
+          else if (line === 'display: update unavailable; previous screen will become stale') this.error = 'Display update unavailable';
+        }
+      });
+      const failed = () => {
+        if (this.worker !== child) return;
+        this.worker = undefined;
+        this.error = 'Display worker unavailable';
+        this.retryAt = Date.now() + 30000;
+      };
+      child.once('error', failed);
+      child.once('exit', failed);
+    } catch {
+      this.error = 'Display worker unavailable'; this.retryAt = Date.now() + 30000;
+    }
+  }
+
+  async close() {
+    this.closing = true;
+    await this.queue.run(async () => { await this.stop(this.worker); this.worker = undefined; });
+  }
+}

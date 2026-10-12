@@ -2,7 +2,8 @@
 
 Optional display package and a separate read-only SelfCare bridge. The deployed
 Bluetooth route, one-hour automatic-sync suppression, pairing and keys are unchanged.
-This is prepared software, **not an OTA deployment or hardware acceptance result**.
+Display OTA and the first encrypted snapshot ACK have been verified on the target.
+Physical screen/button quality and automatic new-measurement acceptance remain separate.
 
 ## Screens
 
@@ -87,6 +88,28 @@ navigation and stale status including `millis()` rollover.
 
 ## Bridge preparation
 
+### Managed QNAP service (v0.3.31)
+
+HomeHub's radio container can supervise this separate display process. No SSH or
+extra container is needed. It is disabled by default and does not acquire radio
+ownership. Using the existing authenticated `POST /api/m5go` management endpoint:
+
+```json
+{"action":"display-config","patch":{"enabled":true,"profiles":[{"user_id":"SELFCARE_USER_ID","label":"USER 1"}]}}
+```
+
+`{"action":"display-status"}` returns running/enabled state, profile count,
+last accepted update time and stale/error state, without returning health values
+or profile identifiers. Disable with `{"action":"display-config","patch":{"enabled":false}}`.
+Settings persist in the private radio directory and resume after service restart.
+The endpoint is fixed to local SelfCare port 17863, Japan time and a 60-second poll;
+this management API cannot set arbitrary URLs. Display actions bypass the Bluetooth
+operation queue and never interrupt a scale connection or its advertisement watcher.
+
+### Alternative standalone bridge
+
+Use this only when the managed service is disabled; do not run both.
+
 Copy `firmware/m5go/display-config.example.json` to private
 `data/m5go-display/config.json`; supply the selected SelfCare user IDs and aliases.
 `interval_seconds` accepts 60–120. QNAP uses the host-network SelfCare endpoint
@@ -124,7 +147,10 @@ Do not run a second bridge alongside it. To stop the feature, stop only
   1,835,008-byte OTA partition. This is not a runtime free-heap measurement.
 - Actual SelfCare saved-history read-only `--check`: success for the single registered
   profile; production measurements were not logged or used in previews.
-- **NOT TESTED:** OTA with this display, physical screen/buttons, runtime heap during
+- Display OTA: succeeded; Native API reconnected and accepted the saved-history
+  snapshot. Existing prepare/cancel bond actions remain present. Idle free heap
+  observed at 92,772 bytes. Automatic sync was restored after the short OTA pause.
+- **NOT TESTED:** physical screen/buttons, runtime heap during
   BLE sync, restart bond persistence, new measurement automatic saving with display.
 
 ## Sources and font
