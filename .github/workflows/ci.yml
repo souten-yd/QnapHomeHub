@@ -25,6 +25,8 @@ jobs:
       - run: sh -n scripts/bootstrap-secrets.sh scripts/qnap-diagnose.sh docker/matterbridge-entrypoint.sh docker/server-entrypoint.sh
       - run: python3 -m py_compile server/ble/ble_worker.py server/ble/ble_protocol.py server/ble/ble_watch.py server/ble/esp_proxy_probe.py
       - run: python3 -m unittest discover -s server/ble -p 'test_*.py'
+      - run: python3 scripts/check-m5go-known-bond.py
+      - run: python3 scripts/check-m5go-controller.py
       - run: docker compose config --quiet
       - run: M5GO_DISPLAY_IMAGE=qnaphomehub-server:ci docker compose -f compose.yaml -f compose.m5go-display.yaml config --quiet
 
