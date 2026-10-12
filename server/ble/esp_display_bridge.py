@@ -328,7 +328,9 @@ async def run(config_path, proxy_path, once=False, check=False, state_path=None,
 
 async def main(args):
     reader, transport = None, None
-    if not (args.once or args.check) and stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode):
+    mode = os.fstat(sys.stdin.fileno()).st_mode
+    # Node/libuv implements child-process "pipes" as Unix socket pairs on Linux.
+    if not (args.once or args.check) and (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
         reader = asyncio.StreamReader(limit=65536)
         transport, _ = await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
     try:

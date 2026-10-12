@@ -3,12 +3,13 @@ import json
 from types import SimpleNamespace
 import unittest
 import tempfile
+import socket
 from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from urllib.parse import parse_qs, urlsplit
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config, midnight_slot, claim_day, run, measurement_snapshot, receive_measurements
+from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config, midnight_slot, claim_day, run, measurement_snapshot, receive_measurements, main
 
 NOW = stamp('2026-10-12T03:00:00+00:00')
 PROFILE = {'user_id': 'alice', 'label': 'USER 1'}
@@ -246,6 +247,23 @@ class MeasurementTest(unittest.IsolatedAsyncioTestCase):
                 await receive_measurements(reader, CONFIG, proxy, {}, asyncio.Lock())
                 self.assertEqual(push.await_count, 2)
                 self.assertTrue(all(call.kwargs == {'measurement':True} for call in push.await_args_list))
+
+
+class ManagedInputTest(unittest.IsolatedAsyncioTestCase):
+    async def test_node_style_socket_stdin_is_consumed_without_history_fetch(self):
+        parent, child = socket.socketpair()
+        try:
+            parent.sendall(b'completed-measurement\n')
+            async def schedule(*args, reader=None, **kwargs):
+                self.assertIsNotNone(reader)
+                self.assertEqual(await asyncio.wait_for(reader.readline(), 1), b'completed-measurement\n')
+                return 0
+            with child.makefile('r') as stream, patch('esp_display_bridge.sys.stdin', stream), \
+                 patch('esp_display_bridge.run', side_effect=schedule):
+                args = SimpleNamespace(config='unused', proxy_config='unused', once=False, check=False, state=None)
+                self.assertEqual(await main(args), 0)
+        finally:
+            parent.close(); child.close()
 
 
 if __name__ == '__main__':
