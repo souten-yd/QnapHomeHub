@@ -223,3 +223,11 @@ M5GOの通常同期成功後、ユーザーの新しい短押し確認でUSBの�
 ユーザーがすぐ実機試験をできないため、再起動確認用の限定監視を `abort` で終了。追加の同期・登録は投入せず、監視のUSB復帰が完了した後にM5GO経路・HBF自動同期ON・listenモードを設定した。M5GO API接続、SelfCare listener ready/busy false/errorなし、予約pending falseを確認。期限付き監視は終了しており、自動でUSBへ戻す処理は動いていない。
 
 既存の1時間のHBF待ち受け抑制があるため、最後の成功09:14:48 JSTに対し10:16 JST以降の通常測定で新規保存を確認する。時刻DBは変更しない。これは待ち受け準備の完了であり、M5GO再起動後の保持・新規測定の自動保存成功ではない。証拠は `secrets/v0330-automatic-wait-*.json`。
+
+### v0.3.31：表示firmwareのOTAとQNAP定期配信
+
+ユーザーの「書き込んでおいて」に従い、既存の認証baseを保持する表示package付きfirmwareを暗号化OTAで適用。upload成功・Native API再接続・保存履歴snapshot ACKを確認。旧prepare/cancel bond actionsも維持。P操作・再登録・Omronキー変更はしていない。約6分後のuptime増加とidle heap 89,420 bytesを確認した。
+
+PR #44をmain `d0f4292` へ統合し、55 Python/44 TypeScript試験・型検査・ビルド・firmware/native renderer試験・Docker公開を確認後、v0.3.31をQNAPへ反映。管理APIで表示workerを有効化し、利用者1名のSelfCare保存履歴を60秒周期で配信。ACKが60,454 ms後に再度進むことを確認した。設定はQNAPに保存され、PCの送信プロセスは不要。
+
+OTAとサーバー更新の間だけHBF自動同期OFF、各finallyでONへ復帰。最終updater currentVersion=0.3.31/busy=false/lastError=null、route=m5go/API接続、listener ready=true/busy=false/error=null。同期成功後1時間の抑止は変更していない。実画面/ボタン・Bluetooth同期中heap・再起動後体組成計認証・新規測定自動保存はNOT TESTED。根拠は `secrets/m5go-display-*.json` と `secrets/v0331-*.json`。

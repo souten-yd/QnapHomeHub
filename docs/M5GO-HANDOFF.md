@@ -1,12 +1,16 @@
 # M5GO作業の引継ぎ（2026-10-12 JST 再開後）
 
-## 画面表示の準備（2026-10-12）
+## 画面表示を導入済み（2026-10-12）
 
-ユーザーの「画面表示機能を準備して」に対応し、別worktree `/data1tb/QnapHomeHub-display`、branch `feat/m5go-health-display`、draft [PR #44](https://github.com/souten-yd/QnapHomeHub/pull/44)で表示機能を準備した。最新値・前回比・7日間の体重/体脂肪率グラフ、A/B/C操作、利用者分離、欠測・更新停止表示。詳細と仮データの画面は同worktreeの `docs/M5GO-DISPLAY.md`。
+ユーザーの「書き込んでおいて」により、画面付きfirmwareを暗号化OTAで適用した。旧認証base `02f85bf` のコードと準備済み表示packageを保持。再接続、`health_display_update` の受信ACK、従来のprepare/cancel bond actionsを確認。再登録・キー変更はしていない。約6分後もuptimeが増加し、idle free heapは89,420 bytesだった。見た目・ボタンの実操作・Bluetooth同期中のheapは未確認。
 
-本体に適用済みの認証処理をそのまま含むprivate候補を `secrets/m5go-display-candidate/dashboard.yaml` からビルドした。OTA binaryは同フォルダの `.esphome/build/qnap-m5go-proxy/build/firmware.ota.bin`。認証情報を含むので公開しない。`secrets/m5go-display-preparation.json` にhash/試験結果/未検証項目を記録。登録利用者が1名のため、その方を `USER 1` とする `secrets/m5go-display-config.json` を準備し、保存履歴の読み取りのみで表示用集計を検証した。
+[PR #44](https://github.com/souten-yd/QnapHomeHub/pull/44) はmain `d0f4292` に統合しv0.3.31として公開、QNAPへ反映した。55 Python/44 TypeScript試験、型検査・ビルド、PR CI `38209057580`、PR firmware `38209057549`、main CI `38209574169`、main firmware `38209574085`、Docker公開 `38209574072` が成功。別worktree `/data1tb/QnapHomeHub-display` は実装/画面資料を保持する。
 
-**OTA・表示bridgeの起動・本番設定変更はしていない。** 通常同期は下記のM5GO固定待ち受けを維持。画面付き候補の実機画面/ボタン、同期中の空きメモリ、再起動bond保持、新規測定自動保存は未検証。表示は体組成計へ再接続せず、SelfCare保存履歴を約60秒周期で読む別サービス。PR #36の実験firmwareをmainの古いbaseへ置き換えないこと。
+QNAPのradioサービス内で表示専用プロセスを管理し、`display-config` 管理APIから利用者1名を `USER 1` として有効化した。約60秒ごとにSelfCare保存履歴を読み、暗号化APIで表示データを送る。Bluetooth広告の購読・GATT・同期ジョブ投入は行わず、1時間の同期抑止は維持。PCの常駐処理やSSHは不要。管理API `display-status` でrunning/lastAcceptedAt/stale/errorを確認できる。実際に受信ACK時刻が60,454 ms進み、PCからの送信なしで次の周期も更新された。無効化は `display-config` のpatch `{"enabled":false}`。
+
+OTAとQNAP更新時のみHBF自動同期を短時間OFFにし、各処理のfinallyで元のONへ復帰済み。route=m5go、API接続、listener ready/busy false/errorなしを確認。画面表示の成功を、新規測定の自動保存や再起動後の体組成計認証成功とは扱わない。
+
+証拠は `secrets/m5go-display-install-result.json`、`secrets/m5go-display-initial-ack.json`、`secrets/m5go-display-after-ota.json`、`secrets/m5go-display-service-install.json`、`secrets/m5go-display-periodic-status.json`、`secrets/v0331-updater-final.json`。private OTA artifactは `secrets/m5go-display-candidate/.esphome/build/qnap-m5go-proxy/build/firmware.ota.bin`。認証情報を含むため公開禁止。hashは `secrets/m5go-display-preparation.json`。PR #36はdraft・次候補v0.3.32で、mainの古いBLE baseをこの実験firmwareへ上書きしないこと。
 
 ## 現在の状態
 
@@ -16,7 +20,7 @@ M5GOのUSB共通登録（接続8）と再登録なしの通常同期（接続9�
 
 直近のHBF同期成功は2026-10-12 09:14:48 JST。SelfCareの既存1時間待ち受け抑制を維持し、余裕を含め**10:16 JST以降**の通常測定で新規自動保存を確認する。成功時刻DBを変更しない。ユーザーはすぐ試せないため、追加のボタン操作を待つ処理を起動しない。P登録・キー書込み・bond解除は追加しない。
 
-PR #43のUSB共通Omron登録はv0.3.30として公開・QNAPへ反映済み。main `a5728ae`、PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。47件のPython試験と38件のTypeScript試験・型検査・ビルドが成功。実験firmwareは `02f85bf`、PR #36はdraft・次候補版v0.3.31。実機成功を踏まえたfirmwareの正式昇格は未実施。
+PR #43のUSB共通Omron登録はv0.3.30として公開・QNAPへ反映済み。main `a5728ae`、PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。47件のPython試験と38件のTypeScript試験・型検査・ビルドが成功。上記OTA前の認証baseは `02f85bf`。現在の表示付きfirmwareとQNAP v0.3.31は冒頭参照。PR #36はdraft・次候補版v0.3.32。実機成功を踏まえたfirmwareの正式昇格は未実施。
 
 待ち受け設定の証拠：`secrets/v0330-automatic-wait-proxy.json`、`secrets/v0330-automatic-wait-listener.json`、`secrets/v0330-automatic-wait-device.json`、`secrets/v0330-automatic-wait-timing.json`。現在地は `secrets/m5go-hardware-acceptance.json`。
 
