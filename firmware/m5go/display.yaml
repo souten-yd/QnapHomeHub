@@ -1,0 +1,106 @@
+# Optional package: merge with the SAME BLE base currently running on the device.
+# Never replace the validated security component with an older main-branch base.
+esphome:
+  includes:
+    - display/health_display.h
+
+json:
+
+api:
+  actions:
+    - action: health_display_update
+      variables:
+        payload: string
+      supports_response: status
+      then:
+        - api.respond:
+            success: !lambda return health_display::dashboard.accept(payload);
+        - component.update: health_screen
+
+spi:
+  clk_pin: GPIO18
+  mosi_pin: GPIO23
+
+output:
+  - platform: ledc
+    pin: GPIO32
+    id: health_backlight_output
+
+light:
+  - platform: monochromatic
+    output: health_backlight_output
+    id: health_backlight
+    internal: true
+    restore_mode: ALWAYS_ON
+    default_transition_length: 0s
+
+font:
+  - file: display/HealthDisplaySubset.otf
+    id: health_small
+    size: 14
+    glyphs: &health_glyphs >-
+      !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~ 最新体重脂肪率測定結果の受信待ち保存済みデータを表示更停止履歴なし前回比期間差平均日記録利用者
+  - file: display/HealthDisplaySubset.otf
+    id: health_medium
+    size: 22
+    glyphs: *health_glyphs
+  - file: display/HealthDisplaySubset.otf
+    id: health_large
+    size: 38
+    glyphs: '0123456789.- '
+
+display:
+  - platform: mipi_spi
+    id: health_screen
+    model: ILI9342
+    cs_pin: GPIO14
+    dc_pin: GPIO27
+    reset_pin: GPIO33
+    dimensions: [320, 240]
+    color_order: BGR
+    invert_colors: true
+    # Original M5GO has no PSRAM: small line buffer, no LVGL/frame animations.
+    color_depth: 8
+    buffer_size: 25%
+    data_rate: 10MHz
+    update_interval: 30s
+    lambda: |-
+      health_display::dashboard.draw(it, id(health_small), id(health_medium), id(health_large));
+
+binary_sensor:
+  - platform: gpio
+    id: health_button_a
+    internal: true
+    pin:
+      number: GPIO39
+      inverted: true
+      mode: INPUT
+    filters:
+      - delayed_on: 30ms
+    on_press:
+      - lambda: health_display::dashboard.latest();
+      - component.update: health_screen
+  - platform: gpio
+    id: health_button_b
+    internal: true
+    pin:
+      number: GPIO38
+      inverted: true
+      mode: INPUT
+    filters:
+      - delayed_on: 30ms
+    on_press:
+      - lambda: health_display::dashboard.graph();
+      - component.update: health_screen
+  - platform: gpio
+    id: health_button_c
+    internal: true
+    pin:
+      number: GPIO37
+      inverted: true
+      mode: INPUT
+    filters:
+      - delayed_on: 30ms
+    on_press:
+      - lambda: health_display::dashboard.next_user();
+      - component.update: health_screen

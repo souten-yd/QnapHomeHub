@@ -1,0 +1,19 @@
+# Optional saved-history display. Requires an image containing esp_display_bridge.py.
+# Pin M5GO_DISPLAY_IMAGE to the tested build; the live radio image is not replaced.
+services:
+  m5go-display:
+    image: ${M5GO_DISPLAY_IMAGE:?Set the tested display image tag}
+    network_mode: host
+    restart: unless-stopped
+    entrypoint: ["/opt/ble-proxy/bin/python", "/app/ble/esp_display_bridge.py"]
+    command: ["--config", "/display/config.json", "--proxy-config", "/radio/m5go.json"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+    logging:
+      driver: "none"
+    volumes:
+      - ./data/m5go-display:/display:ro
+      - ./data/radio/m5go.json:/radio/m5go.json:ro
