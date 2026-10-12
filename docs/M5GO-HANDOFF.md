@@ -2,17 +2,15 @@
 
 ## 現在の状態
 
-**最新実機結果:** USB共通Omron登録（接続8）の後、新しい通常短押し確認でM5GOの再接続・既存キー認証8100・履歴30件・正常終了に成功（接続9）。追加0件／重複30件／不正0件。再登録やUSB介入なし。監視は終了し、USB・元の自動同期ONへ復帰済み、予約pending false、listener ready/busy false/errorなし。次は新しい通常短押し確認を受け、`secrets/check-usb-coexistence-once.py` を1回実行してUSB登録保持を確認する。登録操作は行わない。
+**最新のユーザー指示:** 「直ぐに試せないので、待ち受け同期も準備しておいて」。再起動後の手動試験監視を中止・終了し、その復帰処理が終わった後、HBFをM5GO経路・自動同期ON・listenモードに設定した。M5GO API接続、SelfCare listener ready/busy false/errorなし、登録予約pending falseを実機APIで確認済み。現在は常設サービスの待ち受け状態で、手動監視・期限付きのUSB自動復帰は動いていない。
 
-M5GO経由の履歴取得・通常再接続は成功。USB共存・再起動後の復帰・新規測定の自動保存は未確認。v0.3.30反映後、USB経路・元のHBF自動同期、SelfCare listener ready/busy false/errorなし、登録予約pending falseを確認済み。現在はUSBの登録保持を確認するための新しい通常短押し確認待ち。実行時点の待機・復帰状態は非公開checkpointと監視結果を優先する。同じ登録・解除の反復は行わない。
+M5GOのUSB共通登録（接続8）と再登録なしの通常同期（接続9）は成功。履歴30件を返し、追加0件・重複30件・不正0件。その後USBも再登録なしで8100・履歴30件・正常終了に成功し、既存USB登録の保持を確認した。**M5GO再起動後の保持と新規測定の自動保存は未検証。** 再起動試験はユーザー都合で延期しただけで、成功扱いしない。
 
-**最新の対照試験:** M5GO登録試験後のUSB通常同期は、再登録・アプリキー書込みなしで `state:done`、既存キー応答 `8100`、履歴通知93件、終了opcode 15、`stage:completed`。93測定という意味ではない。その後、新しい短押し確認でM5GO通常同期を1回実行したが、接続番号7は保存bondありからHCI status 6（PIN or Key Missing）/ GAP97で失敗。アプリキー送信前・履歴通知0件で停止した。USB同期が介在したため、この試験単独では無介入のbond保持失敗と扱わない。
+直近のHBF同期成功は2026-10-12 09:14:48 JST。SelfCareの既存1時間待ち受け抑制を維持し、余裕を含め**10:16 JST以降**の通常測定で新規自動保存を確認する。成功時刻DBを変更しない。ユーザーはすぐ試せないため、追加のボタン操作を待つ処理を起動しない。P登録・キー書込み・bond解除は追加しない。
 
-**キーの区別と未検証の前提:** ユーザーから「MACが違うのでM5GOとUSBは別キーでは」と指摘あり。現行実装はSelfCareから渡される同じOmronアプリ認証キーを両経路の `sync_session` で使い、M5GO専用アプリキーを発行・登録していない。一方、BLE bondはUSB側BlueZとM5GO側で別々に作成・保持し、USBのbond鍵をM5GOへコピーしていない。既存アプリキーを別の接続元でも利用できることはHBF-228Tで未確認。接続元への登録・紐付け不足は候補だが、キー値を別にすれば解決することも未確認。USBでの成功が証明するのはUSB経路でのキー有効性まで。
+PR #43のUSB共通Omron登録はv0.3.30として公開・QNAPへ反映済み。main `a5728ae`、PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。47件のPython試験と38件のTypeScript試験・型検査・ビルドが成功。実験firmwareは `02f85bf`、PR #36はdraft・次候補版v0.3.31。実機成功を踏まえたfirmwareの正式昇格は未実施。
 
-**モードの交絡:** USBの `8100` は通常通信、M5GOの `8101` はP（登録）モード。経路だけを変えた比較ではなく、Pでの拒否からキー失効やMAC紐付けを断定しない。最新の通常M5GO失敗はBLE暗号化段階であり、アプリ認証とは区別する。
-
-PR #43のUSB共通Omron登録をv0.3.30として公開・QNAPへ反映済み。mainは `a5728ae`。PR CI `38185106336`、main CI `38185254171`、Docker公開 `38185254187` は成功。47件のPython試験と38件のTypeScript試験・型検査・ビルドが成功。QNAP updater success/busy false、health 0.3.30、radio available/running/lowIo trueを確認。firmwareは `02f85bf`、実験PR #36はdraft・次候補版v0.3.31。
+待ち受け設定の証拠：`secrets/v0330-automatic-wait-proxy.json`、`secrets/v0330-automatic-wait-listener.json`、`secrets/v0330-automatic-wait-device.json`、`secrets/v0330-automatic-wait-timing.json`。現在地は `secrets/m5go-hardware-acceptance.json`。
 
 ## 再開後の実測
 
@@ -25,13 +23,11 @@ PR #43のUSB共通Omron登録をv0.3.30として公開・QNAPへ反映済み。m
 
 ## 次の操作と確認境界
 
-ユーザーの比較後の「進めて」を受け、[USB共通の登録](M5GO-APPLICATION-REGISTRATION.md)を実装・公開・反映した。既存キーの値を使用するが、体組成計内のUSB接続元登録を保持することは未検証。新規キー生成や追加のbond解除は許可・実施していない。
+ユーザーが後日測定したら、まず現在のroute/auto_sync/API/listenerとHBFジョブを読み取り確認する。新しい**自動**ジョブがM5GO経由で完了し、新規測定がSelfCareへ追加された証拠を確認する。手動syncや既存30件の重複取得を自動保存成功と扱わない。
 
-登録とM5GO通常同期の限定監視は成功して終了した。P表示・登録の再試験はしない。現在はUSB通常通信の新しい短押し確認待ち。専用スクリプトは1回のsyncだけを投入し、既存の結果ファイルがあれば再試験を拒否する。証拠は `secrets/v0330-usb-coexistence-result.json`。
+M5GO再起動後の登録保持は別途未確認。再開する場合は新しいユーザー操作と実際のuptime低下等を確認してから試験する。中止済み `secrets/watch-v0330-restart-normal.py` の過去コマンド・結果を再使用しない。同じP登録やbond解除は不要。
 
-SelfCare上は登録要求もsyncジョブのため、登録成功は0件追加・待ち受け成功時刻更新となる。登録を履歴取得成功と混同しない。直後のM5GO通常通信とUSB保持確認は手動sync。自動保存試験は既存の1時間の抑制期間後に行い、時刻DBを変更しない。限定監視の11件の模擬試験は成功。実機の新しい登録・通常再接続・履歴取得は成功。USB共存は未検証。
-
-非公開証拠：`secrets/m5go-cccd-backend-isolated-result.json`、`secrets/v0329-usb-key-validity-trial.json`、`secrets/m5go-v0329-normal-only-result.json`。復帰確認：`secrets/v0329-normal-restored-listener.json`。非公開の現在地は `secrets/m5go-hardware-acceptance.json`、詳しい結果は [受入記録](M5GO-ACCEPTANCE.md)。以下は中断時点の履歴であり、現在の版・次操作には上記を使う。
+登録・通常同期の証拠は `secrets/m5go-usb-registration-isolated-result.json`、USB保持は `secrets/v0330-usb-coexistence-result.json`。実装は [USB共通登録](M5GO-APPLICATION-REGISTRATION.md)、経緯は [受入記録](M5GO-ACCEPTANCE.md)。以下は過去の中断記録で、現在の運用状態には上記を使う。
 
 ---
 

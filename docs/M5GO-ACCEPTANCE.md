@@ -211,3 +211,15 @@ QNAP v0.3.30反映後、updater success/busy false、health ok/version 0.3.30、
 登録から通常同期まで他HBFジョブの介入なし、再登録なし。USB共通登録後に通常の保存bondによる再接続・アプリ認証・履歴取得が成功した。接続元MACとの厳密な紐付け仕様や、登録のどの段階が保持を確定するかまでは証明しない。
 
 限定監視は終了し、USB経路・元のHBF自動同期ONへ復帰。API接続、予約pending false、SelfCare listener ready/busy false/errorなしを再確認。証拠は `secrets/m5go-usb-registration-isolated-result.json`、復帰確認は `secrets/v0330-after-normal-proxy.json` と `secrets/v0330-after-normal-listener.json`。次はUSBの再登録なしの通常同期を確認する。M5GO再起動後の復帰と新規測定の自動保存は未検証。
+
+### v0.3.30：既存USB登録の保持を確認
+
+M5GOの通常同期成功後、ユーザーの新しい短押し確認でUSBの通常syncを1回実行。再登録・キー書換えなしで `8100`、履歴30件（追加0・重複30）、通信終了opcode 15、`stage:completed`、ジョブ `done` を確認。USBの既存登録が維持されている。証拠は `secrets/v0330-usb-coexistence-result.json`。
+
+次はM5GO再起動後の通常syncを1回確認する。再起動前のuptimeを非公開記録に保存し、初期化後の診断またはuptimeで実際の再起動を確認する。単なるUSB給電の抜き差しは内蔵電池により再起動にならない可能性があるため、確認なしに再起動試験成功と扱わない。新しいP登録は行わない。新規測定の自動保存はまだ未検証。
+
+### 常設のM5GO待ち受け同期を準備
+
+ユーザーがすぐ実機試験をできないため、再起動確認用の限定監視を `abort` で終了。追加の同期・登録は投入せず、監視のUSB復帰が完了した後にM5GO経路・HBF自動同期ON・listenモードを設定した。M5GO API接続、SelfCare listener ready/busy false/errorなし、予約pending falseを確認。期限付き監視は終了しており、自動でUSBへ戻す処理は動いていない。
+
+既存の1時間のHBF待ち受け抑制があるため、最後の成功09:14:48 JSTに対し10:16 JST以降の通常測定で新規保存を確認する。時刻DBは変更しない。これは待ち受け準備の完了であり、M5GO再起動後の保持・新規測定の自動保存成功ではない。証拠は `secrets/v0330-automatic-wait-*.json`。
