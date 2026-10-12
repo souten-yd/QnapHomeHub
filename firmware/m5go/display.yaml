@@ -16,6 +16,23 @@ api:
         - api.respond:
             success: !lambda return health_display::dashboard.accept(payload);
         - component.update: health_screen
+    - action: health_display_measurement
+      variables:
+        payload: string
+      supports_response: status
+      then:
+        - if:
+            condition:
+              lambda: return health_display::dashboard.accept(payload);
+            then:
+              - lambda: health_display::dashboard.latest();
+              - component.update: health_screen
+              - script.execute: health_screen_wake
+              - api.respond:
+                  success: true
+            else:
+              - api.respond:
+                  success: false
 
 spi:
   clk_pin: GPIO18
@@ -31,8 +48,16 @@ light:
     output: health_backlight_output
     id: health_backlight
     internal: true
-    restore_mode: ALWAYS_ON
+    restore_mode: ALWAYS_OFF
     default_transition_length: 0s
+
+script:
+  - id: health_screen_wake
+    mode: restart
+    then:
+      - light.turn_on: health_backlight
+      - delay: 5s
+      - light.turn_off: health_backlight
 
 font:
   - file: display/HealthDisplaySubset.otf
@@ -57,6 +82,11 @@ display:
     dc_pin: GPIO27
     reset_pin: GPIO33
     dimensions: [320, 240]
+    # This M5GO panel is mirrored by the generic ILI9342 model's default MX bit.
+    transform:
+      mirror_x: false
+      mirror_y: false
+      swap_xy: false
     color_order: BGR
     invert_colors: true
     # Original M5GO has no PSRAM: small line buffer, no LVGL/frame animations.
@@ -80,6 +110,7 @@ binary_sensor:
     on_press:
       - lambda: health_display::dashboard.latest();
       - component.update: health_screen
+      - script.execute: health_screen_wake
   - platform: gpio
     id: health_button_b
     internal: true
@@ -92,6 +123,7 @@ binary_sensor:
     on_press:
       - lambda: health_display::dashboard.graph();
       - component.update: health_screen
+      - script.execute: health_screen_wake
   - platform: gpio
     id: health_button_c
     internal: true
@@ -104,3 +136,4 @@ binary_sensor:
     on_press:
       - lambda: health_display::dashboard.next_user();
       - component.update: health_screen
+      - script.execute: health_screen_wake

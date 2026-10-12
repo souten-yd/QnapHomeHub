@@ -8,7 +8,7 @@ from unittest.mock import patch, AsyncMock
 from urllib.parse import parse_qs, urlsplit
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config, midnight_slot, claim_day, run
+from esp_display_bridge import build_snapshot, profile_snapshot, push_snapshot, stamp, validate_config, midnight_slot, claim_day, run, measurement_snapshot, receive_measurements
 
 NOW = stamp('2026-10-12T03:00:00+00:00')
 PROFILE = {'user_id': 'alice', 'label': 'USER 1'}
@@ -99,14 +99,14 @@ class SummaryTest(unittest.TestCase):
 
 class PushTest(unittest.IsolatedAsyncioTestCase):
     async def test_display_ack_only_no_bluetooth_and_always_disconnect(self):
-        for mode in ('ok','missing','reject','timeout'):
+        for mode, measurement in ((m, live) for m in ('ok','missing','reject','timeout') for live in (False, True)):
             events=[]
             class Client:
                 def __init__(self, host, port, password, **kw):
                     self_test.assertEqual(port,6053); self_test.assertIn('noise_psk',kw)
                 async def connect(self, **kw): events.append('connect')
                 async def list_entities_services(self):
-                    return [], [] if mode=='missing' else [SimpleNamespace(name='health_display_update',
+                    return [], [] if mode=='missing' else [SimpleNamespace(name='health_display_measurement' if measurement else 'health_display_update',
                         args=[SimpleNamespace(name='payload',type=3)])]
                 async def execute_service(self, service, data, **kw):
                     events.append('display'); self_test.assertTrue(kw['return_response'])
@@ -115,9 +115,9 @@ class PushTest(unittest.IsolatedAsyncioTestCase):
                 async def disconnect(self): events.append('disconnect')
             self_test=self
             proxy={'host':'test.local','noisePsk':'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE='}
-            if mode=='ok': await push_snapshot(proxy,'{}',Client)
+            if mode=='ok': await push_snapshot(proxy,'{}',Client,measurement=measurement)
             else:
-                with self.assertRaises((ValueError,TimeoutError)): await push_snapshot(proxy,'{}',Client)
+                with self.assertRaises((ValueError,TimeoutError)): await push_snapshot(proxy,'{}',Client,measurement=measurement)
             self.assertEqual(events[-1],'disconnect')
             self.assertNotIn('display',events) if mode=='missing' else self.assertIn('display',events)
 
@@ -188,6 +188,64 @@ class ScheduleTest(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(StopClock):
                     await run(config, 'unused', now=lambda:current, sleep=sleep)
                 update.assert_not_called()
+
+
+class MeasurementTest(unittest.IsolatedAsyncioTestCase):
+    def test_live_latest_without_history_http_and_retains_week_and_other_users(self):
+        cache = {}
+        config = CONFIG | {'profiles':[PROFILE, {'user_id':'bob', 'label':'USER 2'}]}
+        with patch('esp_display_bridge.read_json', side_effect=AssertionError('No HTTP on receipt')):
+            first = json.loads(measurement_snapshot(config, [row('2026-10-06T02:00:00Z', 70),
+                row('2026-10-11T02:00:00Z', 69), row('2026-10-11T03:00:00Z', 80, user='bob')], cache, NOW))
+            self.assertEqual(first['active_profile'], 1)
+            second = json.loads(measurement_snapshot(config, [row('2026-10-12T02:00:00Z', 68)], cache, NOW))
+            self.assertEqual(second['active_profile'], 0)
+            self.assertEqual(second['profiles'][0]['weight'], 68)
+            self.assertEqual(second['profiles'][0]['delta'], -1)
+            self.assertEqual(second['profiles'][0]['weights'], [70,None,None,None,None,69,68])
+            self.assertEqual(second['profiles'][1]['weight'], 80)
+            duplicate = json.loads(measurement_snapshot(config, [row('2026-10-12T02:00:00Z', 68)], cache, NOW))
+            self.assertEqual(duplicate['profiles'][0]['delta'], -1)
+            older = json.loads(measurement_snapshot(config, [row('2026-10-10T02:00:00Z', 71)], cache, NOW))
+            self.assertEqual(older['profiles'][0]['weight'], 68)  # Never regress to an older received history item.
+
+    def test_midnight_hydrates_cache_then_live_record_without_id_updates_it(self):
+        cache = {}
+        def get(url):
+            if url.endswith('/api/users'): return [{'id':'alice'}]
+            return {'records':[row('2026-10-11T02:00:00Z', 70)], 'total':1}
+        build_snapshot(CONFIG, NOW, get, history=cache)
+        incoming = row('2026-10-12T02:00:00Z', 69)
+        incoming.pop('id')
+        payload = json.loads(measurement_snapshot(CONFIG, [incoming], cache, NOW))
+        self.assertEqual(payload['profiles'][0]['delta'], -1)
+        self.assertEqual(payload['profiles'][0]['weights'][-2:], [70,69])
+
+    def test_compact_ram_and_atomic_rejection_of_bad_measurements(self):
+        cache = {}
+        records = [row((NOW-timedelta(hours=i)).isoformat(), 60+i/100) for i in range(120)]
+        measurement_snapshot(CONFIG, records, cache, NOW)
+        self.assertLessEqual(len(cache['alice']), 9)
+        before = json.dumps(cache, sort_keys=True)
+        with self.assertRaises(ValueError):
+            measurement_snapshot(CONFIG, [row(NOW.isoformat(), float('nan'))], cache, NOW)
+        self.assertEqual(json.dumps(cache,sort_keys=True), before)
+        for records in ([row((NOW+timedelta(hours=1)).isoformat(), 70)], [row(NOW.isoformat(), 70, user='unknown')], []):
+            self.assertIsNone(measurement_snapshot(CONFIG, records, cache, NOW))
+        self.assertEqual(json.dumps(cache,sort_keys=True), before)
+
+    async def test_event_delivery_uses_measurement_action_failure_does_not_retry_or_stop_next_event(self):
+        reader = asyncio.StreamReader()
+        event = {'event':'measurement', 'records':[row('2000-01-01T00:00:00Z', 70)]}
+        for _ in range(2): reader.feed_data((json.dumps(event)+'\n').encode())
+        reader.feed_eof()
+        with tempfile.TemporaryDirectory() as temp:
+            proxy = Path(temp) / 'proxy.json'; proxy.write_text('{}')
+            with patch('esp_display_bridge.push_snapshot', new_callable=AsyncMock, side_effect=[TimeoutError(),None]) as push, \
+                 patch('esp_display_bridge.build_snapshot', side_effect=AssertionError('No history read')):
+                await receive_measurements(reader, CONFIG, proxy, {}, asyncio.Lock())
+                self.assertEqual(push.await_count, 2)
+                self.assertTrue(all(call.kwargs == {'measurement':True} for call in push.await_args_list))
 
 
 if __name__ == '__main__':
