@@ -231,3 +231,10 @@ M5GOの通常同期成功後、ユーザーの新しい短押し確認でUSBの�
 PR #44をmain `d0f4292` へ統合し、55 Python/44 TypeScript試験・型検査・ビルド・firmware/native renderer試験・Docker公開を確認後、v0.3.31をQNAPへ反映。管理APIで表示workerを有効化し、利用者1名のSelfCare保存履歴を60秒周期で配信。ACKが60,454 ms後に再度進むことを確認した。設定はQNAPに保存され、PCの送信プロセスは不要。
 
 OTAとサーバー更新の間だけHBF自動同期OFF、各finallyでONへ復帰。最終updater currentVersion=0.3.31/busy=false/lastError=null、route=m5go/API接続、listener ready=true/busy=false/error=null。同期成功後1時間の抑止は変更していない。実画面/ボタン・Bluetooth同期中heap・再起動後体組成計認証・新規測定自動保存はNOT TESTED。根拠は `secrets/m5go-display-*.json` と `secrets/v0331-*.json`。
+
+
+## 2026-10-12: 日次取得と受信時の最新表示・5秒点灯
+
+PR #45/#46、main f80ed77、v0.3.33をQNAPへ反映。M5GOも既存認証baseを維持して暗号化OTA・API再接続成功。QNAP履歴取得は毎日0時のみで、60秒pollと起動時取得を停止。受信測定値はQNAP保存を待たせず表示workerにも渡し、履歴の追加HTTPなしで最新表示を更新。左右反転を修正し、ボタン／受信だけ5秒点灯、0時の定期更新は消灯のまま。64 Python/47 TypeScript、native描画、ESP32 build、PRとmain CI成功。
+
+今回のOTA後に新しい体組成計同期を強制投入していない。0時実行、今回の再起動後の体組成計認証、新規自動保存／表示、修正後のLCDと5秒消灯は未確認。登録予約・キー・bond・1時間ゲートは変更せず、HBF auto_sync ON/listenへ復帰。詳細とprivate証拠はM5GO-HANDOFF.mdの現行節。
