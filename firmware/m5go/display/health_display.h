@@ -65,7 +65,7 @@ class Dashboard {
       return;
     }
     auto &p=profiles_[selected_];
-    bool stale = static_cast<uint32_t>(esphome::millis()-updated_) > 180000;
+    bool stale = static_cast<uint32_t>(esphome::millis()-updated_) > 25UL * 60 * 60 * 1000;
     d.print(12,6,small,cyan,p.label.c_str());
     d.print(238,6,small,stale ? amber : gray,stale ? "更新停止" : "保存履歴");
     d.print(12,28,small,gray,p.measured.empty() ? "測定なし" : p.measured.c_str());

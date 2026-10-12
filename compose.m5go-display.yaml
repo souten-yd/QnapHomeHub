@@ -6,7 +6,7 @@ services:
     network_mode: host
     restart: unless-stopped
     entrypoint: ["/opt/ble-proxy/bin/python", "/app/ble/esp_display_bridge.py"]
-    command: ["--config", "/display/config.json", "--proxy-config", "/radio/m5go.json"]
+    command: ["--config", "/display/config.json", "--proxy-config", "/radio/m5go.json", "--state", "/schedule/state.json"]
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -17,3 +17,4 @@ services:
     volumes:
       - ./data/m5go-display:/display:ro
       - ./data/radio/m5go.json:/radio/m5go.json:ro
+      - ./data/m5go-display-schedule:/schedule
