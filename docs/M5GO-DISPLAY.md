@@ -7,6 +7,12 @@ Physical screen/button quality and automatic new-measurement acceptance remain s
 
 ## Screens
 
+The backlight starts off. Any A/B/C button selects its screen and lights it for
+five seconds; another press restarts that five-second period. Successful scale data
+reception also shows that user's latest result for five seconds. Midnight data delivery
+and periodic local drawing do not wake the backlight. The M5GO panel explicitly
+disables the generic ILI9342 horizontal mirror transform, correcting reversed text.
+
 - **A: 最新** — latest saved weight/body fat, measurement time and weight change
   from the immediately previous measurement.
 - **B: 7日間** — switches between weight and body-fat graphs. Seven calendar days
@@ -21,7 +27,7 @@ Physical screen/button quality and automatic new-measurement acceptance remain s
   These are arithmetic summaries, not health assessments.
 - No history: `測定なし`. No bridge update for over 25 hours: `更新停止`,
   while retaining the measurement timestamp and last good data. After reboot the
-  screen waits until the next midnight snapshot; health data is not persisted on the M5GO.
+  screen waits for the next received scale result or midnight snapshot; health data is not persisted on the M5GO.
 
 Previews use fabricated measurements and the real C++ drawing commands; physical
 LCD orientation, colors, font baselines and button operation still need checking.
@@ -39,6 +45,19 @@ existing encrypted Native API. USB syncs and corrected/imported records are incl
 in that midnight snapshot. There is no 60-second history polling and no immediate
 history read on startup, measurement arrival or configuration changes.
 
+On a completed HBF sync (M5GO or USB), the radio copies only configured users'
+body-composition measurements to the display process through a bounded stdin pipe.
+The original result returns immediately to SelfCare for saving, without awaiting a
+display ACK. The display merges received measurements into its RAM-only daily points
+and latest two records per user, pushes the latest result via `health_display_measurement`,
+and wakes the matching user's latest screen for five seconds. Older/duplicate history
+cannot roll the latest value backwards. Failed/empty syncs, registration, other device
+kinds and unconfigured users do not wake the screen. Display delivery is best effort;
+failure never delays saving or retries the scale. No SelfCare HTTP read is made on
+this path. After restart, a scale sync can populate the screen before the next midnight.
+The standalone alternative has no radio stdin event connection and provides only the
+midnight history snapshots.
+
 Dispatch is allowed during the first minute of midnight, accounting for scheduling
 latency. If the service is unavailable throughout that minute, it waits until the
 following midnight; it does not catch up during the day. Before any HTTP read, it
@@ -55,7 +74,7 @@ ACK waits until the next midnight. It never retries the scale sync.
 Profiles must be explicit. Unknown users, mismatched user/kind, malformed values,
 partial/oversized weekly history and incompatible firmware fail closed. Payloads
 are at most 4096 bytes. Logs contain no measurements, database IDs, user names,
-addresses or keys; there is no measurement disk cache. Only the last attempted
+addresses or keys; there is no measurement disk cache (daily points and latest two readings stay in RAM). Only the last attempted
 date is stored in `<config>.schedule.json` (mode 0600), with a lock file. Corrupt or
 unwritable schedule state stops the worker without fetching history. The optional
 container has read-only configuration/root filesystem, a separate writable schedule
@@ -113,7 +132,7 @@ ownership. Using the existing authenticated `POST /api/m5go` management endpoint
 ```
 
 `{"action":"display-status"}` returns running/enabled state, profile count,
-the daily schedule/timezone, next scheduled midnight, last accepted update time
+the daily schedule/timezone, next scheduled midnight, last accepted update time, last measurement ACK time
 and stale/error state, without returning health values
 or profile identifiers. Disable with `{"action":"display-config","patch":{"enabled":false}}`.
 Settings persist in the private radio directory and resume after service restart.

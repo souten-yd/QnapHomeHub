@@ -198,3 +198,30 @@ describe('M5GO routing and Unix socket contract', () => {
     } finally { await close(); }
   });
 });
+
+
+it('copies successful scale results to the display without awaiting an ACK or altering the save response', async () => {
+  const { manager, close } = await setup();
+  let result: any = { records: [{ user_id: 'example', kind: 'body_composition', measured_at: '2026-10-12T00:00:00Z',
+    values: { weight: 70, body_fat: 25 } }], invalid_records: 0 };
+  vi.mocked(spawn).mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough() });
+    child.stdin.resume();
+    child.stdin.on('finish', () => { child.stdout.write(JSON.stringify(result)); child.emit('close', result.error ? 1 : 0); });
+    return child as any;
+  });
+  const notify = vi.spyOn(manager.displayBridge, 'measurement').mockReturnValue(new Promise(() => {}));
+  try {
+    await manager.proxyStore.update(settings);
+    await expect(manager.proxyOperation(sync)).resolves.toEqual(result);
+    expect(notify).toHaveBeenCalledWith(sync, result);
+    notify.mockClear();
+    result = { error: 'sync failed', records: result.records };
+    await expect(manager.proxyOperation(sync)).rejects.toThrow('sync failed');
+    expect(notify).not.toHaveBeenCalled();
+    await manager.proxyStore.update({ route: 'usb' }); manager.startBlueZ = vi.fn(async () => {});
+    result = { records: [], invalid_records: 0 };
+    await expect(manager.callSelfCare(sync)).resolves.toEqual(result);
+    expect(notify).toHaveBeenCalledWith(sync, result);
+  } finally { vi.mocked(spawn).mockReset(); await close(); }
+});

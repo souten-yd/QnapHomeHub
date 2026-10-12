@@ -66,7 +66,7 @@ int main() {
   for (std::string bad : std::vector<std::string>{"{}", "[]", "null", "{broken", std::string(4097,'x')}) {
     assert(!dashboard.accept(bad)); assert(draw()==original);
   }
-  for (int i=0;i<6;i++) {
+  for (int i=0;i<8;i++) {
     JsonDocument bad; bad.set(doc);
     if(i==0) bad["profiles"][0]["weight"]=true;
     if(i==1) bad["profiles"][0].remove("fat");
@@ -74,6 +74,8 @@ int main() {
     if(i==3) bad["profiles"][0]["weight"]=401;
     if(i==4) bad["profiles"][0]["label"]="too long for a profile label";
     if(i==5) bad["profiles"]=nullptr;
+    if(i==6) bad["active_profile"]=2;
+    if(i==7) bad["active_profile"]=true;
     std::string s; serializeJson(bad,s);assert(!dashboard.accept(s));assert(draw()==original);
   }
   std::cout<<original<<"\n";
@@ -94,6 +96,11 @@ int main() {
   assert(dashboard.accept(input));assert(draw().find("更新停止") == std::string::npos);
   esphome::clock_ms=0xfffffff0;assert(dashboard.accept(input));
   esphome::clock_ms=20;assert(draw().find("更新停止") == std::string::npos);
+  doc["active_profile"]=1;
+  std::string received;serializeJson(doc,received);assert(dashboard.accept(received));
+  dashboard.latest();assert(draw().find("USER 2") != std::string::npos);
+  assert(draw().find("最新結果") != std::string::npos);
+  doc.remove("active_profile");dashboard.next_user();
   doc["profiles"][0]["weights"][0]=nullptr;
   doc["profiles"][0]["weights"][1]=nullptr;
   for(int i=2;i<7;i++) doc["profiles"][0]["weights"][i]=nullptr;

@@ -320,6 +320,7 @@ export class SharedRadioManager {
         const value = result as any;
         this.proxyLastSync = { at: new Date().toISOString(), success: true,
           records: Array.isArray(value.records) ? value.records.length : 0, invalidRecords: value.invalid_records };
+        this.displayBridge.measurement(request, result);
       }
       return result;
     } catch (error) {
@@ -404,6 +405,7 @@ export class SharedRadioManager {
     this.pythonWorker = child;
     try {
       const result = await this.pythonResult<T>(child, request);
+      this.displayBridge.measurement(request, result);
       if (request?.diagnostic === true && result && typeof result === 'object') {
         const diagnostic = (result as Record<string, unknown>).diagnostic;
         if (diagnostic && typeof diagnostic === 'object')

@@ -13,6 +13,8 @@ import math
 import os
 from pathlib import Path
 import re
+import stat
+import sys
 import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
@@ -101,7 +103,62 @@ def validate_config(config):
     return config
 
 
-def build_snapshot(config, now=None, get=read_json):
+def compact_history(records, now, zone):
+    """RAM only: keep daily-last points and two latest distinct measurements."""
+    normalized = {}
+    for record in records:
+        at = stamp(record['measured_at']).astimezone(timezone.utc)
+        if at > now:
+            continue
+        key = at.isoformat()
+        normalized[key] = {'id': key, 'user_id': record['user_id'], 'kind': 'body_composition',
+                           'measured_at': key, 'values': {'weight': metric(record, 'weight'),
+                                                        'body_fat': metric(record, 'body_fat')}}
+    ordered = sorted(normalized.values(), key=lambda r: r['measured_at'])
+    start = now.astimezone(zone).date() - timedelta(days=6)
+    daily = {}
+    for record in ordered:
+        day = stamp(record['measured_at']).astimezone(zone).date()
+        if day >= start:
+            daily[day] = record
+    keep = {r['id']: r for r in list(daily.values()) + ordered[-2:]}
+    return list(keep.values())
+
+
+def encode_snapshot(profiles, active=None):
+    value = {'schema': 1, 'profiles': profiles}
+    if active is not None:
+        value['active_profile'] = active
+    payload = json.dumps(value, ensure_ascii=True, allow_nan=False, separators=(',', ':'))
+    if len(payload.encode()) > MAX_PAYLOAD:
+        raise ValueError('Display payload too large')
+    return payload
+
+
+def measurement_snapshot(config, records, history, now=None):
+    """Use the completed sync result directly: never query SelfCare here."""
+    if not isinstance(records, list) or len(records) > 128:
+        raise ValueError('Invalid measurement event')
+    now = now or datetime.now(timezone.utc)
+    zone = ZoneInfo(config.get('timezone', 'Asia/Tokyo'))
+    users = {p['user_id'] for p in config['profiles']}
+    received = [r for r in records if r.get('user_id') in users and r.get('kind') == 'body_composition'
+                and stamp(r['measured_at']) <= now]
+    if not received:
+        return None
+    next_history = {}
+    for user in users:
+        next_history[user] = compact_history(history.get(user, []) + [r for r in received if r['user_id'] == user], now, zone)
+    active_user = max(received, key=lambda r: stamp(r['measured_at']))['user_id']
+    profiles = [profile_snapshot(p, next_history[p['user_id']], next_history[p['user_id']], now, zone)
+                for p in config['profiles']]
+    active = next(i for i, p in enumerate(config['profiles']) if p['user_id'] == active_user)
+    payload = encode_snapshot(profiles, active)
+    history.clear(); history.update(next_history)
+    return payload
+
+
+def build_snapshot(config, now=None, get=read_json, history=None):
     validate_config(config)
     now = now or datetime.now(timezone.utc)
     zone = ZoneInfo(config.get('timezone', 'Asia/Tokyo'))
@@ -110,6 +167,7 @@ def build_snapshot(config, now=None, get=read_json):
     users = get(config['selfcare_url'].rstrip('/') + '/api/users')
     existing = {u['id'] for u in users}
     profiles = []
+    next_history = {}
     for p in config['profiles']:
         if p['user_id'] not in existing:
             raise ValueError('Configured user is absent')
@@ -138,13 +196,14 @@ def build_snapshot(config, now=None, get=read_json):
         else:
             raise ValueError('Weekly history exceeds display limit')
         profiles.append(profile_snapshot(p, latest, week, now, zone))
-    payload = json.dumps({'schema': 1, 'profiles': profiles}, ensure_ascii=True, allow_nan=False, separators=(',', ':'))
-    if len(payload.encode()) > MAX_PAYLOAD:
-        raise ValueError('Display payload too large')
+        next_history[p['user_id']] = compact_history(latest + week, now, zone)
+    payload = encode_snapshot(profiles)
+    if history is not None:
+        history.clear(); history.update(next_history)
     return payload
 
 
-async def push_snapshot(proxy, payload, client_factory=None):
+async def push_snapshot(proxy, payload, client_factory=None, measurement=False):
     if client_factory is None:
         from aioesphomeapi import APIClient
         client_factory = APIClient
@@ -155,7 +214,8 @@ async def push_snapshot(proxy, payload, client_factory=None):
     try:
         await client.connect(login=True)
         _, services = await client.list_entities_services()
-        service = next((s for s in services if s.name == 'health_display_update'), None)
+        action = 'health_display_measurement' if measurement else 'health_display_update'
+        service = next((s for s in services if s.name == action), None)
         if service is None:
             raise ValueError('Display firmware is not installed')
         if len(service.args) != 1 or service.args[0].name != 'payload' or int(service.args[0].type) != 3:
@@ -201,9 +261,9 @@ def claim_day(state_path, day):
         return True
 
 
-async def update(config, proxy_path, check=False):
+async def update(config, proxy_path, check=False, history=None):
     try:
-        payload = await asyncio.to_thread(build_snapshot, config)
+        payload = await asyncio.to_thread(build_snapshot, config, history=history)
         if not check:
             proxy = json.loads(Path(proxy_path).read_text())
             async with asyncio.timeout(40):
@@ -216,24 +276,68 @@ async def update(config, proxy_path, check=False):
         return 1
 
 
+async def receive_measurements(reader, config, proxy_path, history, lock):
+    while True:
+        line = await reader.readline()
+        if not line:
+            return
+        try:
+            event = json.loads(line)
+            if event.get('event') != 'measurement':
+                raise ValueError('Unknown display event')
+            async with lock:
+                payload = measurement_snapshot(config, event.get('records'), history)
+                if payload is None:
+                    continue
+                proxy = json.loads(Path(proxy_path).read_text())
+                async with asyncio.timeout(40):
+                    await push_snapshot(proxy, payload, measurement=True)
+            print('display: measurement accepted', flush=True)
+        except Exception:
+            # Best effort, no retry and no effect on SelfCare saving the sync result.
+            print('display: measurement unavailable', flush=True)
+
+
 async def run(config_path, proxy_path, once=False, check=False, state_path=None,
-              now=lambda: datetime.now(timezone.utc), sleep=asyncio.sleep):
+              now=lambda: datetime.now(timezone.utc), sleep=asyncio.sleep, reader=None):
     config = validate_config(json.loads(Path(config_path).read_text()))
     if once or check:  # Explicit maintenance only; never used by the managed service.
         return await update(config, proxy_path, check)
     zone = ZoneInfo(config.get('timezone', 'Asia/Tokyo'))
     state_path = state_path or str(config_path) + '.schedule.json'
     due = midnight_slot(now(), zone)
+    history, lock = {}, asyncio.Lock()
+    listener = asyncio.create_task(receive_measurements(reader, config, proxy_path, history, lock)) if reader else None
     print('display: midnight schedule ready', flush=True)
-    while True:
-        current = now()
-        if current >= due:
-            if current < due + timedelta(minutes=1) and claim_day(state_path, due.date().isoformat()):
-                await update(config, proxy_path)
-            # No retry, even after failure. A suspended process skips missed slots.
-            due = midnight_slot(max(now(), due + timedelta(minutes=1)), zone)
-        # Clock checks are local only: no HTTP, Native API, BLE or disk polling.
-        await sleep(max(0.01, min(60, (due - now()).total_seconds())))
+    try:
+        while True:
+            current = now()
+            if current >= due:
+                if current < due + timedelta(minutes=1) and claim_day(state_path, due.date().isoformat()):
+                    async with lock:
+                        await update(config, proxy_path, history=history)
+                # No retry, even after failure. A suspended process skips missed slots.
+                due = midnight_slot(max(now(), due + timedelta(minutes=1)), zone)
+            # Clock checks are local only: no HTTP, Native API, BLE or disk polling.
+            await sleep(max(0.01, min(60, (due - now()).total_seconds())))
+    finally:
+        if listener:
+            listener.cancel()
+            await asyncio.gather(listener, return_exceptions=True)
+
+
+async def main(args):
+    reader, transport = None, None
+    mode = os.fstat(sys.stdin.fileno()).st_mode
+    # Node/libuv implements child-process "pipes" as Unix socket pairs on Linux.
+    if not (args.once or args.check) and (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+        reader = asyncio.StreamReader(limit=65536)
+        transport, _ = await asyncio.get_running_loop().connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader), sys.stdin)
+    try:
+        return await run(args.config, args.proxy_config, args.once, args.check, args.state, reader=reader)
+    finally:
+        if transport:
+            transport.close()
 
 
 if __name__ == '__main__':
@@ -244,4 +348,4 @@ if __name__ == '__main__':
     parser.add_argument('--state', help='Persistent schedule state (attempted date only)')
     parser.add_argument('--check', action='store_true', help='Read and validate saved data only; no M5GO connection')
     args = parser.parse_args()
-    raise SystemExit(asyncio.run(run(args.config, args.proxy_config, args.once, args.check, args.state)))
+    raise SystemExit(asyncio.run(main(args)))
