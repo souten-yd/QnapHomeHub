@@ -1,8 +1,16 @@
 # M5GO作業の引継ぎ（2026-10-12 JST 再開後）
 
+## 画面表示の準備（2026-10-12）
+
+ユーザーの「画面表示機能を準備して」に対応し、別worktree `/data1tb/QnapHomeHub-display`、branch `feat/m5go-health-display`、draft [PR #44](https://github.com/souten-yd/QnapHomeHub/pull/44)で表示機能を準備した。最新値・前回比・7日間の体重/体脂肪率グラフ、A/B/C操作、利用者分離、欠測・更新停止表示。詳細と仮データの画面は同worktreeの `docs/M5GO-DISPLAY.md`。
+
+本体に適用済みの認証処理をそのまま含むprivate候補を `secrets/m5go-display-candidate/dashboard.yaml` からビルドした。OTA binaryは同フォルダの `.esphome/build/qnap-m5go-proxy/build/firmware.ota.bin`。認証情報を含むので公開しない。`secrets/m5go-display-preparation.json` にhash/試験結果/未検証項目を記録。登録利用者が1名のため、その方を `USER 1` とする `secrets/m5go-display-config.json` を準備し、保存履歴の読み取りのみで表示用集計を検証した。
+
+**OTA・表示bridgeの起動・本番設定変更はしていない。** 通常同期は下記のM5GO固定待ち受けを維持。画面付き候補の実機画面/ボタン、同期中の空きメモリ、再起動bond保持、新規測定自動保存は未検証。表示は体組成計へ再接続せず、SelfCare保存履歴を約60秒周期で読む別サービス。PR #36の実験firmwareをmainの古いbaseへ置き換えないこと。
+
 ## 現在の状態
 
-**最新のユーザー指示:** 「直ぐに試せないので、待ち受け同期も準備しておいて」。再起動後の手動試験監視を中止・終了し、その復帰処理が終わった後、HBFをM5GO経路・自動同期ON・listenモードに設定した。M5GO API接続、SelfCare listener ready/busy false/errorなし、登録予約pending falseを実機APIで確認済み。現在は常設サービスの待ち受け状態で、手動監視・期限付きのUSB自動復帰は動いていない。
+**同期試験の直近指示:** 「直ぐに試せないので、待ち受け同期も準備しておいて」。再起動後の手動試験監視を中止・終了し、その復帰処理が終わった後、HBFをM5GO経路・自動同期ON・listenモードに設定した。M5GO API接続、SelfCare listener ready/busy false/errorなし、登録予約pending falseを実機APIで確認済み。現在は常設サービスの待ち受け状態で、手動監視・期限付きのUSB自動復帰は動いていない。
 
 M5GOのUSB共通登録（接続8）と再登録なしの通常同期（接続9）は成功。履歴30件を返し、追加0件・重複30件・不正0件。その後USBも再登録なしで8100・履歴30件・正常終了に成功し、既存USB登録の保持を確認した。**M5GO再起動後の保持と新規測定の自動保存は未検証。** 再起動試験はユーザー都合で延期しただけで、成功扱いしない。
 
